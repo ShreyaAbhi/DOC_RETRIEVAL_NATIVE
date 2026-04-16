@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.api import (requests, orders, materials, audit, approvals, guidance,
                      reports, config, ws, documents, auth, users, carriers, pod_registry,
                      monitored_emails, v1_documents, manual_uploads, autopoll, db_explorer,
-                     license)
+                     license, diagnostics)
 
 logger = logging.getLogger(__name__)
 
@@ -357,6 +357,14 @@ async def _run_migrations():
               ('smtp_from',     '',    'From address used on all outbound emails')
             ON CONFLICT (key) DO NOTHING
         """))
+        # Heartbeat / remote diagnostics
+        await conn.execute(text("""
+            INSERT INTO system_config (key, value, description)
+            VALUES
+              ('heartbeat_enabled',   'false', 'Send periodic system health reports to the vendor via email (true/false)'),
+              ('heartbeat_recipient', '',      'Email address to receive heartbeat reports (defaults to vendor email if blank)')
+            ON CONFLICT (key) DO NOTHING
+        """))
         # FTP settings
         await conn.execute(text("""
             INSERT INTO system_config (key, value, description)
@@ -503,6 +511,7 @@ app.include_router(manual_uploads.router,   prefix="/api/requests",          tag
 app.include_router(autopoll.router,         prefix="/api/autopoll",          tags=["Autopoll"])
 app.include_router(db_explorer.router,      prefix="/api/admin/db",          tags=["DB Explorer"])
 app.include_router(license.router,          prefix="/api/admin/license",     tags=["License"])
+app.include_router(diagnostics.router,     prefix="/api/diagnostics",       tags=["Diagnostics"])
 
 
 @app.get("/health")

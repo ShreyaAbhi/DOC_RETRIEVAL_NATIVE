@@ -35,5 +35,9 @@ celery_app.conf.update(
             'task': 'app.core.tasks.hard_delete_retention_task',
             'schedule': crontab(hour=2, minute=0),  # daily at 02:00 UTC
         },
+        'heartbeat': {
+            'task': 'app.core.tasks.heartbeat_task',
+            'schedule': crontab(hour='*/6', minute=0),  # every 6 hours
+        },
     },
 )

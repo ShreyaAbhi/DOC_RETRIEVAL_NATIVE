@@ -1,5 +1,6 @@
 from app.core.celery_app import celery_app
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -270,6 +271,149 @@ def hard_delete_retention_task():
                 deleted = result.rowcount or 0
                 await db.commit()
                 logger.info("hard_delete_retention_task: hard-deleted %d email_request(s)", deleted)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
+@celery_app.task(name="app.core.tasks.heartbeat_task")
+def heartbeat_task():
+    """
+    Periodic heartbeat: collect system diagnostics and email a status
+    report to the vendor.  Controlled by system_config 'heartbeat_enabled'.
+    """
+    import asyncio
+    import httpx
+    import shutil
+    import platform
+    from datetime import datetime, timedelta
+    from sqlalchemy import select, func
+    from app.models.models import User, MonitoredEmail, Order, EmailRequest, SystemConfig
+    from app.core.config import settings
+    from app.services.email_service import send_email
+
+    async def run():
+        engine, SessionLocal = _make_session_factory()
+        try:
+            async with SessionLocal() as db:
+                # Check if heartbeat is enabled
+                row = await db.execute(
+                    select(SystemConfig).where(SystemConfig.key == "heartbeat_enabled")
+                )
+                cfg_row = row.scalar_one_or_none()
+                if not cfg_row or cfg_row.value.lower() not in ("true", "1", "yes"):
+                    logger.debug("heartbeat_task: disabled, skipping")
+                    return
+
+                # Get vendor email
+                row = await db.execute(
+                    select(SystemConfig).where(SystemConfig.key == "heartbeat_recipient")
+                )
+                recip_row = row.scalar_one_or_none()
+                vendor_email = (recip_row.value if recip_row else None) or settings.VENDOR_EMAIL
+                if not vendor_email:
+                    logger.warning("heartbeat_task: no recipient configured")
+                    return
+
+                now = datetime.utcnow()
+                hostname = platform.node()
+
+                # ── Collect stats ─────────────────────────────
+                # Services
+                ollama_up = False
+                try:
+                    async with httpx.AsyncClient(timeout=5.0) as c:
+                        resp = await c.get(settings.OLLAMA_BASE_URL)
+                        ollama_up = resp.status_code < 500
+                except Exception:
+                    pass
+
+                redis_up = False
+                try:
+                    import redis
+                    r = redis.Redis.from_url(settings.REDIS_URL, socket_timeout=3)
+                    r.ping()
+                    redis_up = True
+                except Exception:
+                    pass
+
+                # DB counts
+                total_orders = (await db.execute(select(func.count()).select_from(Order))).scalar()
+                total_requests = (await db.execute(select(func.count()).select_from(EmailRequest))).scalar()
+
+                cutoff_24h = now - timedelta(hours=24)
+                failed_24h = (await db.execute(
+                    select(func.count()).select_from(EmailRequest).where(
+                        EmailRequest.status == "failed",
+                        EmailRequest.received_at >= cutoff_24h,
+                    )
+                )).scalar()
+
+                active_emails = (await db.execute(
+                    select(func.count()).select_from(MonitoredEmail).where(MonitoredEmail.status == "active")
+                )).scalar()
+
+                active_users = (await db.execute(
+                    select(func.count()).select_from(User).where(User.is_active == True)
+                )).scalar()
+
+                # Disk
+                try:
+                    usage = shutil.disk_usage(os.path.abspath("."))
+                    disk_free_gb = round(usage.free / (1024**3), 1)
+                    disk_pct = round(usage.used / usage.total * 100, 1)
+                except Exception:
+                    disk_free_gb = "?"
+                    disk_pct = "?"
+
+                # Version
+                version = "unknown"
+                for p in ["../VERSION", "VERSION", "../../VERSION"]:
+                    ap = os.path.abspath(p)
+                    if os.path.isfile(ap):
+                        with open(ap) as f:
+                            version = f.read().strip()
+                        break
+
+                # ── Build email ───────────────────────────────
+                ok = lambda v: "OK" if v else "DOWN"
+                subject = f"Heartbeat: {hostname} - v{version} - {'OK' if (ollama_up and redis_up and failed_24h == 0) else 'ISSUES'}"
+
+                body = f"""Document Retrieval System - Heartbeat Report
+{'=' * 50}
+
+Host:       {hostname}
+Version:    v{version}
+Timestamp:  {now.strftime('%Y-%m-%d %H:%M UTC')}
+OS:         {platform.system()} {platform.release()}
+
+SERVICES
+  Ollama:   {ok(ollama_up)}
+  Redis:    {ok(redis_up)}
+
+DATABASE
+  Orders:           {total_orders}
+  Email requests:   {total_requests}
+  Failed (24h):     {failed_24h}
+  Monitored emails: {active_emails} active
+  Users:            {active_users} active
+
+DISK
+  Free:    {disk_free_gb} GB
+  Used:    {disk_pct}%
+
+{'=' * 50}
+This is an automated heartbeat from the DOC Retrieval System.
+To disable, set heartbeat_enabled = false in System Config.
+"""
+
+                result = await send_email(db, to=vendor_email, subject=subject, body=body)
+                if result.get("sent"):
+                    logger.info("heartbeat_task: report sent to %s", vendor_email)
+                else:
+                    logger.warning("heartbeat_task: failed to send — %s", result.get("error"))
+
         finally:
             await engine.dispose()
 
