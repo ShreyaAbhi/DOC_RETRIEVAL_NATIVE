@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+backend/venv/
+
+# Node
+frontend/node_modules/
+frontend/.vite/
+frontend/dist/
+
+# Runtime data
+backend/*.db
+backend/*.db-shm
+backend/*.db-wal
+backend/celerybeat-schedule*
+backend/storage/
+backend/pod_storage/
+backend/packing_slips/
+backend/invoices/
+backend/documents/
+backend/order_import/
+
+# Secrets
+.env
+
+# Build artifacts
+DOC_RETRIEVAL_SYSTEM_*.zip
+
+# IDE
+.vscode/
+.idea/
+
+# Private keys
+*.pem
+
+# Claude
+.claude/
+CLAUDE_CODE_INSTRUCTIONS.md
