@@ -34,7 +34,7 @@ function Check-Port {
 }
 
 # ── Update check (non-blocking, best-effort) ─────────────────
-$GITHUB_OWNER = "YOUR_GITHUB_USERNAME"
+$GITHUB_OWNER = "ShreyaAbhi"
 $GITHUB_REPO  = "DOC_RETRIEVAL_NATIVE"
 $updateAvailable = $false
 $remoteVersion   = ""

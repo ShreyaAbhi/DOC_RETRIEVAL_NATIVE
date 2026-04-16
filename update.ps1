@@ -7,7 +7,7 @@
 $host.UI.RawUI.WindowTitle = "Doc Retrieval System - Updater"
 
 # ── Configuration ─────────────────────────────────────────────
-$GITHUB_OWNER = "YOUR_GITHUB_USERNAME"
+$GITHUB_OWNER = "ShreyaAbhi"
 $GITHUB_REPO  = "DOC_RETRIEVAL_NATIVE"
 $INSTALL_DIR  = $PSScriptRoot          # where this script lives = install root
 
