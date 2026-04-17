@@ -5158,14 +5158,12 @@ function SetupEmailPage() {
       await API.post(`/monitored-emails/setup/${token}`, { ...form, imap_port: Number(form.imap_port) })
       setDone(true)
     } catch (err) {
-      const detail = err.response?.data?.detail
-      if (detail?.code === 'basic_auth_blocked') {
+      const detail = err.response?.data?.detail || 'Setup failed. Please try again.'
+      const msg = typeof detail === 'string' ? detail : String(detail)
+      if (msg.includes('BASIC_AUTH_BLOCKED')) {
         setBasicAuthBlocked(true)
-        toast.error(detail.message)
-      } else {
-        const msg = typeof detail === 'string' ? detail : detail?.message || 'Setup failed. Please try again.'
-        toast.error(msg)
       }
+      toast.error(msg.replace('BASIC_AUTH_BLOCKED: ', ''))
     } finally {
       setSubmitting(false)
     }

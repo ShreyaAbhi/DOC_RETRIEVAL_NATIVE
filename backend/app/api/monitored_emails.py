@@ -586,11 +586,13 @@ async def complete_setup(token: str, body: SetupBody, db: AsyncSession = Depends
         body.imap_password, body.use_ssl, body.mailbox_folder,
     )
     if error:
+        # Always return detail as a plain string so toast.error() never
+        # receives an object (which would crash React rendering).
         if error.startswith("BASIC_AUTH_BLOCKED:"):
-            raise HTTPException(status_code=400, detail={
-                "code": "basic_auth_blocked",
-                "message": error.split(":", 1)[1].strip(),
-            })
+            raise HTTPException(
+                status_code=400,
+                detail="BASIC_AUTH_BLOCKED: " + error.split(":", 1)[1].strip(),
+            )
         raise HTTPException(status_code=400, detail=f"Connection test failed: {error}")
 
     me.imap_host              = body.imap_host
