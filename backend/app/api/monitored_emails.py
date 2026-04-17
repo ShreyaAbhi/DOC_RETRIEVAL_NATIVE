@@ -586,11 +586,12 @@ async def complete_setup(token: str, body: SetupBody, db: AsyncSession = Depends
         body.imap_password, body.use_ssl, body.mailbox_folder,
     )
     if error:
-        detail = {"message": f"Connection test failed: {error}"}
         if error.startswith("BASIC_AUTH_BLOCKED:"):
-            detail["code"] = "basic_auth_blocked"
-            detail["message"] = error.split(":", 1)[1].strip()
-        raise HTTPException(status_code=400, detail=detail)
+            raise HTTPException(status_code=400, detail={
+                "code": "basic_auth_blocked",
+                "message": error.split(":", 1)[1].strip(),
+            })
+        raise HTTPException(status_code=400, detail=f"Connection test failed: {error}")
 
     me.imap_host              = body.imap_host
     me.imap_port              = body.imap_port
