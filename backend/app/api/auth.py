@@ -100,10 +100,11 @@ async def forgot_password(body: ForgotPasswordRequest, db: AsyncSession = Depend
         ))
         await db.commit()
 
-        # Read app_url from system_config, fall back to localhost
+        # Read app_base_url from system_config so the reset link points at the
+        # configured public domain (same key used by monitored-email invites).
         from app.models.models import SystemConfig
         cfg_result = await db.execute(
-            select(SystemConfig).where(SystemConfig.key == "app_url")
+            select(SystemConfig).where(SystemConfig.key == "app_base_url")
         )
         cfg = cfg_result.scalar_one_or_none()
         app_url = (cfg.value.rstrip("/") if cfg and cfg.value else "http://localhost:3000")
