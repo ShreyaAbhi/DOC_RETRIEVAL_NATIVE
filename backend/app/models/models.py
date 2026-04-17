@@ -213,7 +213,7 @@ class MonitoredEmail(Base):
     id                     = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     email                  = Column(String(200), unique=True, nullable=False, index=True)
     display_name           = Column(String(200))
-    status                 = Column(String(50), default='pending')  # pending, active, disabled, error
+    status                 = Column(String(50), default='pending')  # pending, active, disabled, error, reauth_required
     notes                  = Column(Text)
     # Invite token
     setup_token            = Column(String(100), unique=True, index=True)
@@ -226,12 +226,31 @@ class MonitoredEmail(Base):
     use_ssl                = Column(Boolean, default=True)
     mailbox_folder         = Column(String(100), default='INBOX')
     check_interval_minutes = Column(Integer, default=5)
+    # Authentication mode: 'password' (IMAP basic auth) or 'oauth_microsoft'
+    auth_type              = Column(String(30), default='password')
+    oauth_access_token     = Column(Text)   # Fernet-encrypted
+    oauth_refresh_token    = Column(Text)   # Fernet-encrypted
+    oauth_token_expires_at = Column(DateTime)
+    oauth_scope            = Column(Text)
+    last_reauth_reminder_at = Column(DateTime)
     # Meta
     created_at             = Column(DateTime, server_default=func.now())
     configured_at          = Column(DateTime)
     created_by             = Column(String(200), default='system')
     last_checked_at        = Column(DateTime)
     last_error             = Column(Text)
+
+
+class OAuthPendingState(Base):
+    """Short-lived state used to correlate an OAuth2 authorization redirect
+    with the monitored-email setup token that initiated it (CSRF protection)."""
+    __tablename__ = "oauth_pending_states"
+    state               = Column(String(100), primary_key=True)
+    provider            = Column(String(30), nullable=False)   # 'microsoft'
+    setup_token         = Column(String(100), nullable=False)
+    monitored_email_id  = Column(String(36))
+    created_at          = Column(DateTime, server_default=func.now())
+    expires_at          = Column(DateTime, nullable=False)
 
 
 class SystemConfig(Base):

@@ -5116,6 +5116,7 @@ function SetupEmailPage() {
   const [loading, setLoading] = React.useState(true)
   const [done, setDone] = React.useState(false)
   const [submitting, setSubmitting] = React.useState(false)
+  const [mode, setMode] = React.useState('choose')
   const [form, setForm] = React.useState({
     imap_host: '', imap_port: 993, imap_user: '', imap_password: '',
     use_ssl: true, mailbox_folder: 'INBOX', check_interval_minutes: 5,
@@ -5135,10 +5136,15 @@ function SetupEmailPage() {
           mailbox_folder:         r.data.mailbox_folder || 'INBOX',
           check_interval_minutes: r.data.check_interval_minutes || 5,
         }))
+        if (!r.data.microsoft_oauth_enabled) setMode('imap')
       })
       .catch(e => setLoadError(e.response?.data?.detail || 'Invalid or expired link.'))
       .finally(() => setLoading(false))
   }, [token])
+
+  const signInWithMicrosoft = () => {
+    window.location.href = `/api/oauth/microsoft/start?setup_token=${encodeURIComponent(token)}`
+  }
 
   const submit = async (e) => {
     e.preventDefault()
@@ -5199,12 +5205,47 @@ function SetupEmailPage() {
           </div>
         )}
 
-        {info && !done && !loading && (
+        {info && !done && !loading && mode === 'choose' && (
+          <div className="flex flex-col gap-4">
+            <div className={cn('p-3 rounded text-sm', dark ? 'bg-blue-500/10 text-blue-300 border border-blue-500/20' : 'bg-blue-50 text-blue-700 border border-blue-100')}>
+              Connecting: <strong>{info.email}</strong>
+              {info.display_name && <span className="ml-1 opacity-70">({info.display_name})</span>}
+            </div>
+
+            {info.is_reauth && (
+              <div className={cn('p-3 rounded text-sm', dark ? 'bg-amber-500/10 text-amber-300 border border-amber-500/20' : 'bg-amber-50 text-amber-700 border border-amber-100')}>
+                Your Microsoft 365 authorization has expired or been revoked. Please sign in again to resume mailbox monitoring.
+              </div>
+            )}
+
+            <Btn variant="primary" className="w-full justify-center" onClick={signInWithMicrosoft}>
+              <svg width="16" height="16" viewBox="0 0 21 21"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>
+              Sign in with Microsoft
+            </Btn>
+
+            <div className={cn('flex items-center gap-3 text-xs', lbl)}>
+              <div className="flex-1 border-t border-current opacity-20"/> or <div className="flex-1 border-t border-current opacity-20"/>
+            </div>
+
+            <Btn variant="secondary" className="w-full justify-center" onClick={() => setMode('imap')}>
+              Configure IMAP manually
+            </Btn>
+          </div>
+        )}
+
+        {info && !done && !loading && mode === 'imap' && (
           <form onSubmit={submit} className="flex flex-col gap-4">
             <div className={cn('p-3 rounded text-sm', dark ? 'bg-blue-500/10 text-blue-300 border border-blue-500/20' : 'bg-blue-50 text-blue-700 border border-blue-100')}>
               Connecting: <strong>{info.email}</strong>
               {info.display_name && <span className="ml-1 opacity-70">({info.display_name})</span>}
             </div>
+
+            {info.microsoft_oauth_enabled && (
+              <button type="button" onClick={() => setMode('choose')}
+                className={cn('text-xs text-left hover:underline', dark ? 'text-blue-400' : 'text-blue-600')}>
+                &larr; Back to sign-in options
+              </button>
+            )}
 
             <div className={cn('text-xs font-semibold uppercase tracking-widest mt-1', lbl)}>IMAP Settings</div>
 
@@ -5239,6 +5280,34 @@ function SetupEmailPage() {
             </Btn>
           </form>
         )}
+      </div>
+    </div>
+  )
+}
+
+
+function OAuthCompletePage() {
+  const [params] = useSearchParams()
+  const { dark } = useTheme()
+  const status  = params.get('status') || 'error'
+  const message = params.get('message') || ''
+  const bg   = dark ? 'bg-[#060c18] min-h-screen' : 'bg-gray-100 min-h-screen'
+  const card = dark ? 'bg-[#0d1424] border border-[#1a2540]' : 'bg-white border border-gray-200'
+  const ok = status === 'success'
+  return (
+    <div className={cn('flex items-center justify-center p-6', bg)}>
+      <div className={cn('w-full max-w-lg rounded-xl shadow-2xl p-8 text-center', card)}>
+        <div className="flex flex-col items-center gap-3">
+          {ok ? <CheckCircle2 size={48} className="text-green-400"/> : <AlertCircle size={48} className="text-red-400"/>}
+          <div className={cn('font-semibold text-lg', dark ? 'text-slate-100' : 'text-gray-900')}>
+            {ok ? 'Microsoft 365 account connected!' : 'Authorization failed'}
+          </div>
+          <div className={cn('text-sm', dark ? 'text-slate-400' : 'text-gray-600')}>
+            {ok
+              ? <>Your mailbox {message && <><strong>{message}</strong> </>}is now being monitored. You can close this tab.</>
+              : <>We couldn't complete the Microsoft sign-in. {message && <em>{message}</em>}</>}
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -5713,6 +5782,7 @@ function App() {
           <BrowserRouter>
             <Routes>
               <Route path="/setup-email"    element={<SetupEmailPage />} />
+              <Route path="/setup-email/oauth-complete" element={<OAuthCompletePage />} />
               <Route path="/forgot-password" element={<ForgotPasswordPage />} />
               <Route path="/reset-password"  element={<ResetPasswordPage />} />
               <Route path="/*"              element={<ProtectedApp />} />

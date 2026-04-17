@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.api import (requests, orders, materials, audit, approvals, guidance,
                      reports, config, ws, documents, auth, users, carriers, pod_registry,
                      monitored_emails, v1_documents, manual_uploads, autopoll, db_explorer,
-                     license, diagnostics)
+                     license, diagnostics, oauth_microsoft)
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +124,7 @@ async def _imap_poll_loop():
                 entries = result.scalars().all()
                 now = datetime.now(timezone.utc)
                 for me in entries:
-                    if not me.imap_host or not me.imap_password:
+                    if not me.imap_host or (not me.imap_password and (me.auth_type or 'password') == 'password'):
                         continue
                     interval = timedelta(minutes=me.check_interval_minutes or 5)
                     due = me.last_checked_at is None or (now - me.last_checked_at) >= interval
@@ -235,6 +235,13 @@ async def _run_migrations():
         await _add_column(conn, "ALTER TABLE pod_registry ADD COLUMN is_deleted BOOLEAN NOT NULL DEFAULT 0")
         await _add_column(conn, "ALTER TABLE pod_registry ADD COLUMN deleted_at DATETIME")
         await _add_column(conn, "ALTER TABLE monitored_emails ADD COLUMN last_error TEXT")
+        # Microsoft OAuth2 support for monitored mailboxes
+        await _add_column(conn, "ALTER TABLE monitored_emails ADD COLUMN auth_type VARCHAR(30) DEFAULT 'password'")
+        await _add_column(conn, "ALTER TABLE monitored_emails ADD COLUMN oauth_access_token TEXT")
+        await _add_column(conn, "ALTER TABLE monitored_emails ADD COLUMN oauth_refresh_token TEXT")
+        await _add_column(conn, "ALTER TABLE monitored_emails ADD COLUMN oauth_token_expires_at DATETIME")
+        await _add_column(conn, "ALTER TABLE monitored_emails ADD COLUMN oauth_scope TEXT")
+        await _add_column(conn, "ALTER TABLE monitored_emails ADD COLUMN last_reauth_reminder_at DATETIME")
         # email_requests — additional columns added after initial schema
         await _add_column(conn, "ALTER TABLE email_requests ADD COLUMN packing_slip_document_id TEXT")
         await _add_column(conn, "ALTER TABLE email_requests ADD COLUMN invoice_document_id TEXT")
@@ -363,6 +370,17 @@ async def _run_migrations():
             VALUES
               ('heartbeat_enabled',   'false', 'Send periodic system health reports to the vendor via email (true/false)'),
               ('heartbeat_recipient', '',      'Email address to receive heartbeat reports (defaults to vendor email if blank)')
+            ON CONFLICT (key) DO NOTHING
+        """))
+        # Microsoft OAuth2 settings (for monitored mailboxes on Microsoft 365 / Outlook)
+        await conn.execute(text("""
+            INSERT INTO system_config (key, value, description)
+            VALUES
+              ('microsoft_oauth_client_id',     '',       'Azure AD application (client) ID for Microsoft 365 IMAP OAuth2'),
+              ('microsoft_oauth_client_secret', '',       'Azure AD client secret — write-only, value is masked after saving'),
+              ('microsoft_oauth_tenant',        'common', 'Azure AD tenant ID (use "common" to allow any tenant, "consumers" for personal accounts)'),
+              ('microsoft_oauth_scope',         'offline_access https://outlook.office.com/IMAP.AccessAsUser.All',
+                                                          'OAuth2 scopes to request. Must include offline_access for refresh tokens.')
             ON CONFLICT (key) DO NOTHING
         """))
         # FTP settings
@@ -505,6 +523,7 @@ app.include_router(documents.router,    prefix="/api/documents",    tags=["Docum
 app.include_router(carriers.router,     prefix="/api/carriers",     tags=["Carriers"])
 app.include_router(pod_registry.router,      prefix="/api/pod-registry",      tags=["POD Registry"])
 app.include_router(monitored_emails.router, prefix="/api/monitored-emails",  tags=["Monitored Emails"])
+app.include_router(oauth_microsoft.router,  prefix="/api/oauth/microsoft",   tags=["OAuth: Microsoft"])
 app.include_router(ws.router,               prefix="/ws",                    tags=["WebSocket"])
 app.include_router(v1_documents.router,     prefix="/api/v1/documents",      tags=["External API v1"])
 app.include_router(manual_uploads.router,   prefix="/api/requests",          tags=["Manual Uploads"])

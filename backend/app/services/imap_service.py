@@ -117,12 +117,17 @@ def _poll_mailbox_sync(
     use_ssl: bool,
     folder: str,
     subject_filters: list[str],
+    oauth_access_token: str | None = None,
 ) -> List[dict]:
     """Connect to IMAP, fetch UNSEEN emails, ingest matching ones, leave others UNSEEN."""
     conn = imaplib.IMAP4_SSL(imap_host, imap_port) if use_ssl else imaplib.IMAP4(imap_host, imap_port)
     results = []
     try:
-        conn.login(imap_user, password)
+        if oauth_access_token:
+            auth_string = f"user={imap_user}\x01auth=Bearer {oauth_access_token}\x01\x01"
+            conn.authenticate("XOAUTH2", lambda _x: auth_string.encode())
+        else:
+            conn.login(imap_user, password)
         conn.select(folder)
         status, data = conn.search(None, "UNSEEN")
         if status != "OK" or not data[0]:
@@ -205,12 +210,23 @@ async def poll_monitored_email(db: AsyncSession, me: MonitoredEmail) -> int:
     Poll one monitored mailbox. Creates EmailRequest rows for each new email.
     Updates last_checked_at and last_error. Returns count of emails ingested.
     """
-    try:
-        password = decrypt_password(me.imap_password)
-    except Exception:
-        me.last_error = "Failed to decrypt IMAP password"
-        await db.commit()
-        return 0
+    password: str = ""
+    oauth_access_token: str | None = None
+
+    if (me.auth_type or "password") == "oauth_microsoft":
+        from app.api.oauth_microsoft import get_valid_access_token
+        oauth_access_token = await get_valid_access_token(db, me)
+        if not oauth_access_token:
+            me.last_checked_at = datetime.now(timezone.utc)
+            await db.commit()
+            return 0
+    else:
+        try:
+            password = decrypt_password(me.imap_password)
+        except Exception:
+            me.last_error = "Failed to decrypt IMAP password"
+            await db.commit()
+            return 0
 
     # Load subject filters from system_config
     from app.models.models import SystemConfig
@@ -230,6 +246,7 @@ async def poll_monitored_email(db: AsyncSession, me: MonitoredEmail) -> int:
         me.use_ssl if me.use_ssl is not None else True,
         me.mailbox_folder or "INBOX",
         subject_filters,
+        oauth_access_token,
     )
     emails = None
     last_exc = None
@@ -246,7 +263,15 @@ async def poll_monitored_email(db: AsyncSession, me: MonitoredEmail) -> int:
     if emails is None:
         me.last_checked_at = datetime.now(timezone.utc)
         me.last_error = str(last_exc)
-        me.status = "error"
+        msg = str(last_exc).upper() if last_exc else ""
+        if (me.auth_type or "password") == "oauth_microsoft" and (
+            "AUTHENTICATIONFAILED" in msg
+            or "INVALID CREDENTIALS" in msg
+            or "XOAUTH2" in msg
+        ):
+            me.status = "reauth_required"
+        else:
+            me.status = "error"
         await db.commit()
         logger.error("IMAP poll failed for %s: %s", me.email, last_exc)
         return 0

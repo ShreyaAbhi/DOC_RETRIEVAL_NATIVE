@@ -420,6 +420,124 @@ To disable, set heartbeat_enabled = false in System Config.
     asyncio.run(run())
 
 
+@celery_app.task(name="app.core.tasks.oauth_reauth_reminder_task")
+def oauth_reauth_reminder_task():
+    """
+    Periodic task: find monitored mailboxes whose Microsoft OAuth2 grant has
+    expired (or is about to expire) and email them a link to re-authorize.
+    """
+    import asyncio
+    import secrets
+    from datetime import datetime, timedelta
+    from sqlalchemy import select, or_
+    from app.models.models import MonitoredEmail, SystemConfig
+    from app.services.email_service import send_email
+
+    REAUTH_WARNING_DAYS      = 7
+    REMINDER_INTERVAL_HOURS  = 24
+    REAUTH_TOKEN_HOURS       = 72
+
+    async def run():
+        engine, SessionLocal = _make_session_factory()
+        try:
+            async with SessionLocal() as db:
+                now = datetime.utcnow()
+                warn_before = now + timedelta(days=REAUTH_WARNING_DAYS)
+
+                row = await db.get(SystemConfig, "app_base_url")
+                base_url = (row.value or "").strip().rstrip("/") if row else ""
+
+                result = await db.execute(
+                    select(MonitoredEmail).where(
+                        MonitoredEmail.auth_type == "oauth_microsoft",
+                        or_(
+                            MonitoredEmail.status == "reauth_required",
+                            MonitoredEmail.oauth_token_expires_at == None,   # noqa: E711
+                            MonitoredEmail.oauth_token_expires_at <= warn_before,
+                        ),
+                    )
+                )
+                candidates = result.scalars().all()
+                if not candidates:
+                    logger.debug("oauth_reauth_reminder_task: nothing due")
+                    return
+
+                for me in candidates:
+                    if me.last_reauth_reminder_at and (
+                        now - me.last_reauth_reminder_at
+                    ) < timedelta(hours=REMINDER_INTERVAL_HOURS):
+                        continue
+
+                    me.setup_token      = secrets.token_urlsafe(32)
+                    me.token_expires_at = now + timedelta(hours=REAUTH_TOKEN_HOURS)
+                    setup_url = (
+                        f"{base_url}/setup-email?token={me.setup_token}"
+                        if base_url else f"/setup-email?token={me.setup_token}"
+                    )
+
+                    expires_txt = (
+                        me.oauth_token_expires_at.strftime("%Y-%m-%d %H:%M UTC")
+                        if me.oauth_token_expires_at else "already expired"
+                    )
+                    is_expired = me.status == "reauth_required" or (
+                        me.oauth_token_expires_at and me.oauth_token_expires_at <= now
+                    )
+
+                    subject = (
+                        "Action required: re-authorize your Microsoft 365 mailbox"
+                        if is_expired else
+                        "Your Microsoft 365 mailbox authorization expires soon"
+                    )
+                    lead = (
+                        "Your Microsoft 365 authorization for the POD Automation System "
+                        "has expired (or been revoked)."
+                        if is_expired else
+                        f"Your Microsoft 365 authorization for the POD Automation System "
+                        f"will expire on {expires_txt}."
+                    )
+
+                    body_html = f"""
+<html><body style="font-family:Arial,sans-serif;max-width:620px;margin:40px auto;color:#333;font-size:15px;line-height:1.6">
+  <h2 style="color:#0d6efd">POD Automation System</h2>
+  <p>Hi,</p>
+  <p>{lead}</p>
+  <p>Until you re-authorize, new emails to <strong>{me.email}</strong> will no longer be
+  picked up automatically. Please click the button below to sign in with Microsoft again.</p>
+  <p style="text-align:center;margin:32px 0">
+    <a href="{setup_url}"
+       style="background:#0d6efd;color:#fff;padding:14px 32px;border-radius:6px;
+              text-decoration:none;font-weight:bold;font-size:16px;display:inline-block">
+      Re-authorize Mailbox
+    </a>
+  </p>
+  <p style="font-size:13px;color:#666">
+    This link is valid for {REAUTH_TOKEN_HOURS} hours. If it expires, ask your administrator
+    to send a new invitation.
+  </p>
+  <p style="font-size:13px;color:#666">
+    Can't click the button? Copy this link into your browser:<br>
+    <code style="background:#f5f5f5;padding:3px 6px;border-radius:4px;font-size:12px;word-break:break-all">{setup_url}</code>
+  </p>
+  <hr style="border:none;border-top:1px solid #dee2e6;margin:24px 0"/>
+  <p style="font-size:12px;color:#aaa">Sent automatically by the POD Automation System.</p>
+</body></html>
+""".strip()
+
+                    result = await send_email(db, to=me.email, subject=subject, body=body_html)
+                    if result.get("sent"):
+                        me.last_reauth_reminder_at = now
+                        logger.info("oauth_reauth_reminder_task: reminder sent to %s (expires %s)",
+                                    me.email, expires_txt)
+                    else:
+                        logger.warning("oauth_reauth_reminder_task: failed to send to %s — %s",
+                                       me.email, result.get("error"))
+                    await db.commit()
+        finally:
+            await engine.dispose()
+
+    asyncio.run(run())
+
+
 @celery_app.task(name="app.core.tasks.poll_ftp_task")
 def poll_ftp_task():
     """Periodic task: poll FTP server for new POD files."""

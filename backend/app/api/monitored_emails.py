@@ -520,6 +520,12 @@ async def toggle_monitored_email(
 @router.get("/setup/{token}")
 async def get_setup_info(token: str, db: AsyncSession = Depends(get_db)):
     me = await _resolve_token(token, db)
+
+    # Is Microsoft OAuth configured on the server? If yes we'll surface the
+    # "Sign in with Microsoft" button on the setup page.
+    ms_row = await db.get(SystemConfig, 'microsoft_oauth_client_id')
+    microsoft_oauth_enabled = bool((ms_row.value or '').strip()) if ms_row else False
+
     return {
         "email":        me.email,
         "display_name": me.display_name,
@@ -530,6 +536,9 @@ async def get_setup_info(token: str, db: AsyncSession = Depends(get_db)):
         "use_ssl":      me.use_ssl if me.use_ssl is not None else True,
         "mailbox_folder":          me.mailbox_folder or 'INBOX',
         "check_interval_minutes":  me.check_interval_minutes or 5,
+        "auth_type":               me.auth_type or 'password',
+        "microsoft_oauth_enabled": microsoft_oauth_enabled,
+        "is_reauth":               me.status == 'reauth_required',
     }
 
 
@@ -623,6 +632,8 @@ def _out(m: MonitoredEmail) -> dict:
         "created_by":              m.created_by,
         "last_checked_at":         m.last_checked_at.isoformat() if m.last_checked_at else None,
         "last_error":              m.last_error,
+        "auth_type":               m.auth_type or 'password',
+        "oauth_token_expires_at":  m.oauth_token_expires_at.isoformat() if m.oauth_token_expires_at else None,
         "has_pending_invite":      m.setup_token is not None,
         "token_expires_at":        m.token_expires_at.isoformat() if m.token_expires_at else None,
     }

@@ -39,5 +39,9 @@ celery_app.conf.update(
             'task': 'app.core.tasks.heartbeat_task',
             'schedule': crontab(hour='*/6', minute=0),  # every 6 hours
         },
+        'oauth-reauth-reminder': {
+            'task': 'app.core.tasks.oauth_reauth_reminder_task',
+            'schedule': crontab(hour=9, minute=0),  # daily at 09:00 UTC
+        },
     },
 )
