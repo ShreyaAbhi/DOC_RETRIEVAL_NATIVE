@@ -547,6 +547,7 @@ def _test_imap_connection(imap_host: str, imap_port: int, imap_user: str,
     """
     Attempt a real IMAP login and SELECT the mailbox.
     Returns None on success, or an error message string on failure.
+    Detects Microsoft 365 BasicAuthBlocked errors and returns a specific hint.
     """
     import imaplib as _imap
     try:
@@ -558,6 +559,13 @@ def _test_imap_connection(imap_host: str, imap_port: int, imap_user: str,
             return f"Could not select mailbox '{mailbox_folder}'"
         return None
     except _imap.IMAP4.error as e:
+        err_str = str(e)
+        if "BasicAuthBlocked" in err_str or "LogonDenied" in err_str:
+            return (
+                "BASIC_AUTH_BLOCKED: Microsoft 365 has disabled password-based "
+                "authentication for this account. Please use the 'Sign in with "
+                "Microsoft' option instead, which uses secure OAuth2 authentication."
+            )
         return f"IMAP authentication failed: {e}"
     except OSError as e:
         return f"Could not connect to {imap_host}:{imap_port} — {e}"
@@ -578,7 +586,11 @@ async def complete_setup(token: str, body: SetupBody, db: AsyncSession = Depends
         body.imap_password, body.use_ssl, body.mailbox_folder,
     )
     if error:
-        raise HTTPException(status_code=400, detail=f"Connection test failed: {error}")
+        detail = {"message": f"Connection test failed: {error}"}
+        if error.startswith("BASIC_AUTH_BLOCKED:"):
+            detail["code"] = "basic_auth_blocked"
+            detail["message"] = error.split(":", 1)[1].strip()
+        raise HTTPException(status_code=400, detail=detail)
 
     me.imap_host              = body.imap_host
     me.imap_port              = body.imap_port

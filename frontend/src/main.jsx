@@ -5117,6 +5117,7 @@ function SetupEmailPage() {
   const [done, setDone] = React.useState(false)
   const [submitting, setSubmitting] = React.useState(false)
   const [mode, setMode] = React.useState('choose')
+  const [basicAuthBlocked, setBasicAuthBlocked] = React.useState(false)
   const [form, setForm] = React.useState({
     imap_host: '', imap_port: 993, imap_user: '', imap_password: '',
     use_ssl: true, mailbox_folder: 'INBOX', check_interval_minutes: 5,
@@ -5157,7 +5158,14 @@ function SetupEmailPage() {
       await API.post(`/monitored-emails/setup/${token}`, { ...form, imap_port: Number(form.imap_port) })
       setDone(true)
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Setup failed. Please try again.')
+      const detail = err.response?.data?.detail
+      if (detail?.code === 'basic_auth_blocked') {
+        setBasicAuthBlocked(true)
+        toast.error(detail.message)
+      } else {
+        const msg = typeof detail === 'string' ? detail : detail?.message || 'Setup failed. Please try again.'
+        toast.error(msg)
+      }
     } finally {
       setSubmitting(false)
     }
@@ -5228,8 +5236,12 @@ function SetupEmailPage() {
             </div>
 
             <Btn variant="secondary" className="w-full justify-center" onClick={() => setMode('imap')}>
-              Configure IMAP manually
+              Configure IMAP manually (app password)
             </Btn>
+            <div className={cn('text-xs text-center', dark ? 'text-slate-500' : 'text-gray-400')}>
+              Use manual IMAP only if your provider supports app passwords (e.g. Gmail).
+              Most Microsoft 365 accounts require OAuth2 sign-in above.
+            </div>
           </div>
         )}
 
@@ -5241,10 +5253,30 @@ function SetupEmailPage() {
             </div>
 
             {info.microsoft_oauth_enabled && (
-              <button type="button" onClick={() => setMode('choose')}
+              <button type="button" onClick={() => { setMode('choose'); setBasicAuthBlocked(false) }}
                 className={cn('text-xs text-left hover:underline', dark ? 'text-blue-400' : 'text-blue-600')}>
                 &larr; Back to sign-in options
               </button>
+            )}
+
+            {basicAuthBlocked && (
+              <div className={cn('p-4 rounded-lg border text-sm', dark ? 'bg-amber-500/10 text-amber-200 border-amber-500/30' : 'bg-amber-50 text-amber-800 border-amber-200')}>
+                <div className="font-semibold mb-1">Password login blocked by Microsoft 365</div>
+                <div className="mb-3 text-xs opacity-80">
+                  This organization has disabled password-based IMAP access (including app passwords).
+                  You must use OAuth2 sign-in to connect this account.
+                </div>
+                {info.microsoft_oauth_enabled ? (
+                  <Btn variant="primary" className="w-full justify-center" onClick={signInWithMicrosoft}>
+                    <svg width="16" height="16" viewBox="0 0 21 21"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>
+                    Sign in with Microsoft
+                  </Btn>
+                ) : (
+                  <div className={cn('text-xs', dark ? 'text-red-300' : 'text-red-600')}>
+                    Microsoft OAuth is not configured on this server. Contact your administrator to enable it in System Settings.
+                  </div>
+                )}
+              </div>
             )}
 
             <div className={cn('text-xs font-semibold uppercase tracking-widest mt-1', lbl)}>IMAP Settings</div>
@@ -5271,8 +5303,9 @@ function SetupEmailPage() {
             </label>
 
             <div className={cn('text-xs p-3 rounded border', dark ? 'border-[#1a2540] text-slate-500 bg-[#080f1c]' : 'border-gray-100 text-gray-400 bg-gray-50')}>
-              For Gmail/Google Workspace: use an <strong>App Password</strong> (not your regular password).<br/>
-              For Microsoft 365: use your email address as the username and an app password or OAuth token.
+              <strong>Gmail / Google Workspace:</strong> use an <strong>App Password</strong> (not your regular password).<br/>
+              <strong>Microsoft 365:</strong> most organizations require OAuth2 sign-in (use the "Sign in with Microsoft" option).
+              App passwords may work if your admin has not disabled basic authentication.
             </div>
 
             <Btn type="submit" variant="primary" disabled={submitting} className="w-full justify-center mt-2">
