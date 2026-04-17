@@ -29,6 +29,7 @@ MASKED_CONFIG_KEYS = {
     "smtp_password", "ftp_password",
     "ups_client_secret", "fedex_client_secret", "dhl_api_key", "purolator_api_key",
     "llm_openai_api_key", "llm_anthropic_api_key",
+    "microsoft_oauth_client_secret",
 }
 _MASK = "••••••••"
 

@@ -3220,6 +3220,7 @@ const SETTING_GROUPS = {
   'POD Retrieval APIs': CARRIER_API_KEYS,
   'Storage Folders':    ['pod_folder_path', 'packing_slip_folder_path', 'invoice_folder_path'],
   'Email / SMTP':       ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_password', 'smtp_from'],
+  'Microsoft 365 OAuth': ['microsoft_oauth_client_id', 'microsoft_oauth_client_secret', 'microsoft_oauth_tenant'],
   'FTP':                ['ftp_host', 'ftp_user', 'ftp_password', 'ftp_base_path', 'ftp_poll_interval_minutes'],
   'Power Automate':     ['power_automate_packing_slip_url', 'power_automate_invoice_url'],
   'Templates':          ['carrier_request_template', 'email_signature'],
@@ -3250,7 +3251,7 @@ const PROMPT_HINTS = {
   llm_response_instructions:   'Instruction bullet points appended to single-order response prompts. Leave blank to use built-in default.',
 }
 const FOLDER_PATH_KEYS = ['pod_folder_path', 'packing_slip_folder_path', 'invoice_folder_path']
-const SENSITIVE_KEYS = ['smtp_password', 'ftp_password', 'ups_client_secret', 'fedex_client_secret', 'dhl_api_key', 'purolator_api_key', 'llm_openai_api_key', 'llm_anthropic_api_key']
+const SENSITIVE_KEYS = ['smtp_password', 'ftp_password', 'ups_client_secret', 'fedex_client_secret', 'dhl_api_key', 'purolator_api_key', 'llm_openai_api_key', 'llm_anthropic_api_key', 'microsoft_oauth_client_secret']
 
 const LLM_PROVIDER_OPTIONS = [
   { value: 'ollama',    label: 'Ollama (Local)' },
