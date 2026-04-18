@@ -209,17 +209,22 @@ def check_ollama_task():
         engine, SessionLocal = _make_session_factory()
         try:
             async with SessionLocal() as db:
+                # Read Ollama URL from SystemConfig
+                from app.models.models import SystemConfig
+                row = await db.get(SystemConfig, "ollama_base_url")
+                ollama_url = (row.value.strip() if row and row.value else None) or settings.OLLAMA_BASE_URL
+
                 # Check Ollama health
                 ollama_up = False
                 try:
                     async with httpx.AsyncClient(timeout=10.0) as client:
-                        resp = await client.get(settings.OLLAMA_BASE_URL)
+                        resp = await client.get(ollama_url)
                         ollama_up = resp.status_code < 500
                 except Exception as exc:
                     logger.warning("check_ollama_task: Ollama unreachable — %s", exc)
 
                 if ollama_up:
-                    logger.info("check_ollama_task: Ollama is up at %s", settings.OLLAMA_BASE_URL)
+                    logger.info("check_ollama_task: Ollama is up at %s", ollama_url)
                     return
 
                 # Ollama is down — fetch all active admins and super_admins
@@ -235,7 +240,7 @@ def check_ollama_task():
                 subject = "⚠ Ollama Service Unreachable"
                 body = (
                     f"This is an automated alert from the POD System.\n\n"
-                    f"Ollama is not reachable at {settings.OLLAMA_BASE_URL}.\n\n"
+                    f"Ollama is not reachable at {ollama_url}.\n\n"
                     f"Email classification and pipeline processing will fail until Ollama is restored.\n\n"
                     f"Please start the Ollama service on the host machine and verify it is accessible."
                 )
@@ -321,10 +326,12 @@ def heartbeat_task():
 
                 # ── Collect stats ─────────────────────────────
                 # Services
+                url_row = await db.get(SystemConfig, "ollama_base_url")
+                ollama_url = (url_row.value.strip() if url_row and url_row.value else None) or settings.OLLAMA_BASE_URL
                 ollama_up = False
                 try:
                     async with httpx.AsyncClient(timeout=5.0) as c:
-                        resp = await c.get(settings.OLLAMA_BASE_URL)
+                        resp = await c.get(ollama_url)
                         ollama_up = resp.status_code < 500
                 except Exception:
                     pass
@@ -549,7 +556,12 @@ def poll_ftp_task():
         engine, SessionLocal = _make_session_factory()
         try:
             async with SessionLocal() as db:
-                result = await poll_ftp(db, settings.OLLAMA_BASE_URL, settings.OLLAMA_MODEL)
+                from app.models.models import SystemConfig
+                url_row = await db.get(SystemConfig, "ollama_base_url")
+                model_row = await db.get(SystemConfig, "ollama_model")
+                ollama_url = (url_row.value.strip() if url_row and url_row.value else None) or settings.OLLAMA_BASE_URL
+                ollama_model = (model_row.value.strip() if model_row and model_row.value else None) or settings.OLLAMA_MODEL
+                result = await poll_ftp(db, ollama_url, ollama_model)
                 logger.info(f"FTP poll result: {result}")
                 return result
         finally:

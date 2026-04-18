@@ -3216,7 +3216,7 @@ const CARRIER_API_KEYS = CARRIER_APIS.flatMap(c => c.fields.map(f => f.key))
 const SETTING_GROUPS = {
   'System':             ['confidence_threshold', 'approval_required', 'auto_send_approved', 'email_check_interval', 'max_retry_attempts', 'app_base_url', 'default_pod_request_email', 'imap_subject_filters'],
   'Auto-Response':      ['auto_send_enabled', 'auto_send_confidence_threshold', 'auto_send_require_pod', 'auto_send_require_packing_slip', 'auto_send_require_invoice'],
-  'LLM Provider':       ['llm_provider', 'llm_provider_fallback_enabled', 'llm_anonymize_pii', 'llm_openai_endpoint', 'llm_openai_model', 'llm_openai_api_key', 'llm_anthropic_endpoint', 'llm_anthropic_model', 'llm_anthropic_api_key'],
+  'LLM Provider':       ['llm_provider', 'llm_provider_fallback_enabled', 'llm_anonymize_pii', 'ollama_base_url', 'ollama_model', 'llm_openai_endpoint', 'llm_openai_model', 'llm_openai_api_key', 'llm_anthropic_endpoint', 'llm_anthropic_model', 'llm_anthropic_api_key'],
   'POD Retrieval APIs': CARRIER_API_KEYS,
   'Storage Folders':    ['pod_folder_path', 'packing_slip_folder_path', 'invoice_folder_path'],
   'Email / SMTP':       ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_password', 'smtp_from'],

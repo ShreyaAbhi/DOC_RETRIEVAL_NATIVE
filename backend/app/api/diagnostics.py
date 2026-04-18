@@ -105,7 +105,9 @@ async def full_diagnostics(
 
     # ── Services ──────────────────────────────────────────────
     import asyncio
-    ollama_check = _check_service(settings.OLLAMA_BASE_URL)
+    url_row = await db.get(SystemConfig, "ollama_base_url")
+    ollama_url = (url_row.value.strip() if url_row and url_row.value else None) or settings.OLLAMA_BASE_URL
+    ollama_check = _check_service(ollama_url)
     backend_check = _check_service(f"http://localhost:{settings.BACKEND_PORT if hasattr(settings, 'BACKEND_PORT') else 8002}/health")
     redis_check = _check_redis()
 

@@ -36,7 +36,21 @@ def make_ref() -> str:
 
 
 # ── Ollama LLM helper ─────────────────────────────────────────
-async def _ollama_chat(system: str, user: str, expect_json: bool = False) -> str:
+async def _get_ollama_settings(db: AsyncSession) -> tuple[str, str]:
+    """Read ollama_base_url and ollama_model from SystemConfig, falling back to env/defaults."""
+    rows = (await db.execute(
+        select(SystemConfig).where(SystemConfig.key.in_(["ollama_base_url", "ollama_model"]))
+    )).scalars().all()
+    cfg = {r.key: (r.value or "").strip() for r in rows}
+    base_url = cfg.get("ollama_base_url") or settings.OLLAMA_BASE_URL
+    model = cfg.get("ollama_model") or settings.OLLAMA_MODEL
+    return base_url, model
+
+
+async def _ollama_chat(system: str, user: str, expect_json: bool = False,
+                       base_url: str | None = None, model: str | None = None) -> str:
+    _base_url = base_url or settings.OLLAMA_BASE_URL
+    _model = model or settings.OLLAMA_MODEL
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
@@ -44,9 +58,9 @@ async def _ollama_chat(system: str, user: str, expect_json: bool = False) -> str
 
     async with httpx.AsyncClient(timeout=180) as client:
         r = await client.post(
-            f"{settings.OLLAMA_BASE_URL}/api/chat",
+            f"{_base_url}/api/chat",
             json={
-                "model": settings.OLLAMA_MODEL,
+                "model": _model,
                 "messages": messages,
                 "stream": False,
                 "options": {
@@ -154,6 +168,9 @@ async def _llm_chat(
     fallback_enabled = cfg.get("llm_provider_fallback_enabled", "true").strip().lower() != "false"
     anonymize_pii = cfg.get("llm_anonymize_pii", "false").strip().lower() == "true"
 
+    # Read Ollama settings from SystemConfig
+    ollama_url, ollama_model = await _get_ollama_settings(db)
+
     def _scrub(text: str) -> str:
         """Apply pii_map substitutions then regex-scrub any remaining email addresses."""
         result = text
@@ -165,7 +182,7 @@ async def _llm_chat(
         return result
 
     if provider == "ollama":
-        result = await _ollama_chat(system, user, expect_json)
+        result = await _ollama_chat(system, user, expect_json, base_url=ollama_url, model=ollama_model)
         return result, "ollama"
 
     # Anonymize user prompt for external providers if the setting is on
@@ -182,12 +199,12 @@ async def _llm_chat(
             return result, f"anthropic/{model}"
         else:
             # Unknown provider — fall through to Ollama (use original user prompt)
-            result = await _ollama_chat(system, user, expect_json)
+            result = await _ollama_chat(system, user, expect_json, base_url=ollama_url, model=ollama_model)
             return result, f"ollama_fallback_from_unknown_provider|provider={provider}"
     except Exception as exc:
         if not fallback_enabled:
             raise
-        result = await _ollama_chat(system, user, expect_json)
+        result = await _ollama_chat(system, user, expect_json, base_url=ollama_url, model=ollama_model)
         return result, f"ollama_fallback_from_{provider}|{exc}"
 
 

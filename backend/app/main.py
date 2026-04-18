@@ -1,11 +1,13 @@
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from contextlib import asynccontextmanager
 import asyncio
 import logging
 import time
 from collections import defaultdict
+from pathlib import Path
 
 from app.db.session import engine
 from app.core.config import settings
@@ -301,6 +303,10 @@ async def _run_migrations():
         await conn.execute(text("""
             INSERT INTO system_config (key, value, description)
             VALUES
+              ('ollama_base_url', 'http://localhost:11434',
+               'Ollama server URL (e.g. http://localhost:11434)'),
+              ('ollama_model', 'qwen2.5:3b',
+               'Ollama model name to use for local inference (e.g. qwen2.5:3b, mistral-nemo)'),
               ('llm_provider', 'ollama',
                'Active LLM provider: ollama (local), openai (OpenAI-compatible), or anthropic'),
               ('llm_provider_fallback_enabled', 'true',
@@ -536,3 +542,22 @@ app.include_router(diagnostics.router,     prefix="/api/diagnostics",       tags
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+# ── Serve frontend production build (SPA) ──────────────────────
+_FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+
+if _FRONTEND_DIST.is_dir():
+    from fastapi.responses import FileResponse
+
+    # Serve static assets (JS, CSS, images) under /assets/
+    app.mount("/assets", StaticFiles(directory=str(_FRONTEND_DIST / "assets")), name="static-assets")
+
+    # SPA fallback: serve index.html for all non-API routes (client-side routing)
+    @app.get("/{full_path:path}")
+    async def spa_fallback(full_path: str):
+        # Check if the exact file exists in dist (e.g. favicon.ico, robots.txt)
+        candidate = (_FRONTEND_DIST / full_path).resolve()
+        if candidate.is_file() and str(candidate).startswith(str(_FRONTEND_DIST)):
+            return FileResponse(str(candidate))
+        return FileResponse(str(_FRONTEND_DIST / "index.html"))

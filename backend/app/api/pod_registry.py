@@ -502,7 +502,11 @@ async def trigger_ftp_poll(
     _: User = Depends(require_admin),
 ):
     """Manually trigger an FTP poll (admin only)."""
-    result = await poll_ftp(db, settings.OLLAMA_BASE_URL, settings.OLLAMA_MODEL)
+    url_row = await db.get(SystemConfig, "ollama_base_url")
+    model_row = await db.get(SystemConfig, "ollama_model")
+    ollama_url = (url_row.value.strip() if url_row and url_row.value else None) or settings.OLLAMA_BASE_URL
+    ollama_model = (model_row.value.strip() if model_row and model_row.value else None) or settings.OLLAMA_MODEL
+    result = await poll_ftp(db, ollama_url, ollama_model)
     return result
 
 

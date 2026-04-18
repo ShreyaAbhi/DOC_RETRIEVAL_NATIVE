@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite+aiosqlite:///./pod_system.db"
     REDIS_URL: str = "redis://localhost:6379"
     OLLAMA_BASE_URL: str = "http://localhost:11434"
-    OLLAMA_MODEL: str = "mistral-nemo"
+    OLLAMA_MODEL: str = "qwen2.5:3b"
     UPS_CLIENT_ID: Optional[str] = None
     UPS_CLIENT_SECRET: Optional[str] = None
     UPS_SANDBOX: bool = True
