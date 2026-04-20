@@ -1,5 +1,5 @@
 # ============================================================
-#  Document Retrieval System — Remove Windows Services
+#  Document Retrieval System - Remove Windows Services
 #  Run as Administrator
 # ============================================================
 #Requires -RunAsAdministrator
@@ -35,7 +35,7 @@ foreach ($svc in $services) {
         & $nssm remove $svc confirm 2>&1 | Out-Null
         Write-Host " removed." -ForegroundColor Green
     } else {
-        Write-Host "  $svc — not installed, skipping." -ForegroundColor DarkGray
+        Write-Host "  $svc - not installed, skipping." -ForegroundColor DarkGray
     }
 }
 

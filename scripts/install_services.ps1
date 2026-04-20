@@ -1,5 +1,5 @@
 # ============================================================
-#  Document Retrieval System — Install as Windows Services
+#  Document Retrieval System - Install as Windows Services
 #  Run as Administrator
 # ============================================================
 #Requires -RunAsAdministrator
@@ -62,7 +62,7 @@ if (Test-Path $envFile) {
 $pythonExe = "$root\backend\venv\Scripts\python.exe"
 $celeryExe = "$root\backend\venv\Scripts\celery.exe"
 
-# Ollama may be installed per-user or system-wide — check both locations
+# Ollama may be installed per-user or system-wide - check both locations
 $ollamaExe = $null
 $ollamaCandidates = @(
     "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe",
@@ -144,7 +144,7 @@ function Install-Service {
         & $nssm set $Name AppEnvironmentExtra $envString 2>&1 | Out-Null
     }
 
-    Write-Host " — OK" -ForegroundColor Green
+    Write-Host " - OK" -ForegroundColor Green
 }
 
 # ── Install services ─────────────────────────────────────────
@@ -157,20 +157,20 @@ $ollamaInstalled = $false
 if ($ollamaExe) {
     Install-Service `
         -Name "$serviceName-Ollama" `
-        -DisplayName "DRS — Ollama (AI Engine)" `
+        -DisplayName "DRS - Ollama (AI Engine)" `
         -Exe $ollamaExe `
         -Arguments "serve" `
         -WorkingDir $root
     $ollamaInstalled = $true
 } else {
-    Write-Host "  Skipping Ollama — not found in any standard location" -ForegroundColor Yellow
+    Write-Host "  Skipping Ollama - not found in any standard location" -ForegroundColor Yellow
     Write-Host "    Checked: $($ollamaCandidates -join ', ')" -ForegroundColor DarkGray
 }
 
 # 2. Backend (FastAPI + serves frontend)
 Install-Service `
     -Name "$serviceName-Backend" `
-    -DisplayName "DRS — Backend API" `
+    -DisplayName "DRS - Backend API" `
     -Exe $pythonExe `
     -Arguments "-m uvicorn app.main:app --host 0.0.0.0 --port $backendPort" `
     -WorkingDir "$root\backend" `
@@ -182,7 +182,7 @@ Install-Service `
 # 3. Celery Worker
 Install-Service `
     -Name "$serviceName-Worker" `
-    -DisplayName "DRS — Celery Worker" `
+    -DisplayName "DRS - Celery Worker" `
     -Exe $celeryExe `
     -Arguments "-A app.core.celery_app worker --loglevel=info -Q pod_tasks --pool=solo" `
     -WorkingDir "$root\backend" `
@@ -194,7 +194,7 @@ Install-Service `
 # 4. Celery Beat
 Install-Service `
     -Name "$serviceName-Beat" `
-    -DisplayName "DRS — Celery Beat (Scheduler)" `
+    -DisplayName "DRS - Celery Beat (Scheduler)" `
     -Exe $celeryExe `
     -Arguments "-A app.core.celery_app beat --loglevel=info" `
     -WorkingDir "$root\backend"
@@ -214,8 +214,8 @@ foreach ($svc in $services) {
         Start-Service -Name $svc -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 2
         $s = Get-Service -Name $svc
-        $color = if ($s.Status -eq "Running") { "Green" } else { "Yellow" }
-        Write-Host "  $svc — $($s.Status)" -ForegroundColor $color
+        if ($s.Status -eq "Running") { $color = "Green" } else { $color = "Yellow" }
+        Write-Host "  $svc - $($s.Status)" -ForegroundColor $color
     }
 }
 
