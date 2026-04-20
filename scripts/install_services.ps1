@@ -317,20 +317,23 @@ Write-Host "  Starting services..." -ForegroundColor Cyan
 $services = @("$serviceName-Backend", "$serviceName-Worker", "$serviceName-Beat")
 if ($ollamaInstalled) { $services = @("$serviceName-Ollama") + $services }
 $allRunning = $true
+$failedServices = @{}
 foreach ($svc in $services) {
     $s = Get-Service -Name $svc -ErrorAction SilentlyContinue
     if (-not $s) {
         Write-Host "  $svc - NOT FOUND (install may have failed)" -ForegroundColor Red
         $allRunning = $false
+        $failedServices[$svc] = "Service not found after installation"
         continue
     }
 
     $started = $false
+    $lastError = ""
     for ($attempt = 1; $attempt -le 3; $attempt++) {
         if ($attempt -gt 1) {
             Write-Host "  $svc - retry $attempt of 3..." -ForegroundColor Yellow
         }
-        Start-Service -Name $svc -ErrorAction SilentlyContinue
+        Start-Service -Name $svc -ErrorAction SilentlyContinue 2>&1 | Out-Null
         # Wait up to 15 seconds for the service to reach Running state
         $waited = 0
         while ($waited -lt 15) {
@@ -343,6 +346,31 @@ foreach ($svc in $services) {
             $started = $true
             break
         }
+
+        # Capture reason for failure before retrying
+        $lastError = "Service status: $($s.Status)"
+
+        # Check Windows Event Log for the most recent error from this service
+        $evt = Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Service Control Manager'; Level=2; StartTime=(Get-Date).AddMinutes(-2)} -MaxEvents 5 -ErrorAction SilentlyContinue |
+               Where-Object { $_.Message -like "*$svc*" } | Select-Object -First 1
+        if ($evt) { $lastError += "`n    Event Log: $($evt.Message.Trim())" }
+
+        # Check NSSM's recorded exit code
+        $exitCode = & $nssm get $svc AppExitCode 2>&1
+        if ($exitCode -and $exitCode -notmatch "No exit code") {
+            $lastError += "`n    Last exit code: $exitCode"
+        }
+
+        # Read last 10 lines of stderr log for the actual error
+        $safeName = $svc.Replace("-", "_")
+        $stderrLog = "$root\logs\${safeName}_stderr.log"
+        if (Test-Path $stderrLog) {
+            $tail = Get-Content $stderrLog -Tail 10 -ErrorAction SilentlyContinue
+            if ($tail) { $lastError += "`n    Recent stderr:`n      " + ($tail -join "`n      ") }
+        }
+
+        Write-Host "    Attempt $attempt failed - $($s.Status)" -ForegroundColor DarkGray
+
         # Stop before retrying
         & $nssm stop $svc 2>&1 | Out-Null
         Start-Sleep -Seconds 3
@@ -353,6 +381,7 @@ foreach ($svc in $services) {
     } else {
         Write-Host "  $svc - FAILED after 3 attempts ($($s.Status))" -ForegroundColor Red
         $allRunning = $false
+        $failedServices[$svc] = $lastError
     }
 }
 
@@ -362,7 +391,95 @@ if (-not $allRunning) {
     Write-Host "   SOME SERVICES FAILED TO START            " -ForegroundColor Red
     Write-Host "  ==========================================" -ForegroundColor Red
     Write-Host ""
-    Write-Host "  Check logs at: $root\logs\" -ForegroundColor Yellow
+
+    # Write diagnostic report to file and console
+    $diagFile = "$root\logs\install_diagnostic.log"
+    $diagLines = @()
+    $diagLines += "=== DRS Service Install Diagnostic Report ==="
+    $diagLines += "Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+    $diagLines += "Install path: $root"
+    $diagLines += ""
+
+    foreach ($fSvc in $failedServices.Keys) {
+        $info = $failedServices[$fSvc]
+        Write-Host "  --- $fSvc ---" -ForegroundColor Yellow
+        $diagLines += "--- $fSvc ---"
+
+        # Show the captured error info
+        $info -split "`n" | ForEach-Object {
+            Write-Host "  $_" -ForegroundColor Gray
+            $diagLines += "  $_"
+        }
+
+        # Show NSSM configuration for this service
+        $diagLines += "  NSSM config:"
+        $appPath = & $nssm get $fSvc Application 2>&1
+        $appArgs = & $nssm get $fSvc AppParameters 2>&1
+        $appDir  = & $nssm get $fSvc AppDirectory 2>&1
+        $appEnv  = & $nssm get $fSvc AppEnvironmentExtra 2>&1
+        $deps    = & $nssm get $fSvc DependOnService 2>&1
+        $diagLines += "    Application: $appPath"
+        $diagLines += "    Arguments:   $appArgs"
+        $diagLines += "    WorkingDir:  $appDir"
+        $diagLines += "    EnvExtra:    $appEnv"
+        $diagLines += "    DependsOn:   $deps"
+
+        # Check if the executable actually exists
+        if ($appPath -and -not (Test-Path $appPath)) {
+            $msg = "  PROBLEM: Executable not found at $appPath"
+            Write-Host "  $msg" -ForegroundColor Red
+            $diagLines += "  $msg"
+        }
+
+        # Check dependencies are running
+        if ($deps -and $deps -notmatch "returned") {
+            $depList = $deps -split "`n" | Where-Object { $_.Trim() }
+            foreach ($dep in $depList) {
+                $depSvc = Get-Service -Name $dep.Trim() -ErrorAction SilentlyContinue
+                if (-not $depSvc) {
+                    $msg = "  PROBLEM: Dependency '$dep' does not exist"
+                    Write-Host "  $msg" -ForegroundColor Red
+                    $diagLines += "  $msg"
+                } elseif ($depSvc.Status -ne "Running") {
+                    $msg = "  PROBLEM: Dependency '$dep' is $($depSvc.Status), not Running"
+                    Write-Host "  $msg" -ForegroundColor Red
+                    $diagLines += "  $msg"
+                }
+            }
+        }
+
+        # Port conflict check for known ports
+        if ($fSvc -like "*Ollama*") {
+            $portInUse = Get-NetTCPConnection -LocalPort 11434 -ErrorAction SilentlyContinue
+            if ($portInUse) {
+                $pid = $portInUse[0].OwningProcess
+                $procName = (Get-Process -Id $pid -ErrorAction SilentlyContinue).ProcessName
+                $msg = "  PROBLEM: Port 11434 held by $procName (PID $pid)"
+                Write-Host "  $msg" -ForegroundColor Red
+                $diagLines += "  $msg"
+            }
+        }
+        if ($fSvc -like "*Backend*") {
+            $portInUse = Get-NetTCPConnection -LocalPort $backendPort -ErrorAction SilentlyContinue
+            if ($portInUse) {
+                $pid = $portInUse[0].OwningProcess
+                $procName = (Get-Process -Id $pid -ErrorAction SilentlyContinue).ProcessName
+                $msg = "  PROBLEM: Port $backendPort held by $procName (PID $pid)"
+                Write-Host "  $msg" -ForegroundColor Red
+                $diagLines += "  $msg"
+            }
+        }
+
+        Write-Host ""
+        $diagLines += ""
+    }
+
+    # Save diagnostic report to file
+    $diagLines | Out-File -FilePath $diagFile -Encoding UTF8 -Force
+    Write-Host "  Full diagnostic saved to:" -ForegroundColor Yellow
+    Write-Host "    $diagFile" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  Service logs at: $root\logs\" -ForegroundColor Yellow
     Write-Host "  Then re-run this installer to try again." -ForegroundColor Yellow
     Write-Host ""
     Write-Host "  Press any key to close." -ForegroundColor DarkGray
