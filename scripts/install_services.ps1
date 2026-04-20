@@ -128,6 +128,9 @@ function Install-Service {
     & $nssm set $Name AppStopMethodConsole 5000 2>&1 | Out-Null
     & $nssm set $Name AppStopMethodWindow 5000 2>&1 | Out-Null
     & $nssm set $Name AppStopMethodThreads 5000 2>&1 | Out-Null
+    # Always restart on crash with a 5-second delay
+    & $nssm set $Name AppExit Default Restart 2>&1 | Out-Null
+    & $nssm set $Name AppRestartDelay 5000 2>&1 | Out-Null
 
     # Log files
     $logDir = "$root\logs"
@@ -258,12 +261,12 @@ if ($redisService) {
     & $nssm set "$serviceName-Worker" DependOnService "$serviceName-Backend" 2>&1 | Out-Null
 }
 
-# 4. Celery Beat
+# 4. Celery Beat (schedule file stored in logs dir for write access)
 Install-Service `
     -Name "$serviceName-Beat" `
     -DisplayName "DRS - Celery Beat (Scheduler)" `
     -Exe $celeryExe `
-    -Arguments "-A app.core.celery_app beat --loglevel=info" `
+    -Arguments "-A app.core.celery_app beat --loglevel=info --schedule=$root\logs\celerybeat-schedule" `
     -WorkingDir "$root\backend"
 
 # Beat depends on Redis if available
@@ -277,9 +280,20 @@ Write-Host "  Starting services..." -ForegroundColor Cyan
 
 $services = @("$serviceName-Backend", "$serviceName-Worker", "$serviceName-Beat")
 if ($ollamaInstalled) { $services = @("$serviceName-Ollama") + $services }
+$allRunning = $true
 foreach ($svc in $services) {
     $s = Get-Service -Name $svc -ErrorAction SilentlyContinue
-    if ($s) {
+    if (-not $s) {
+        Write-Host "  $svc - NOT FOUND (install may have failed)" -ForegroundColor Red
+        $allRunning = $false
+        continue
+    }
+
+    $started = $false
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        if ($attempt -gt 1) {
+            Write-Host "  $svc - retry $attempt of 3..." -ForegroundColor Yellow
+        }
         Start-Service -Name $svc -ErrorAction SilentlyContinue
         # Wait up to 15 seconds for the service to reach Running state
         $waited = 0
@@ -289,11 +303,35 @@ foreach ($svc in $services) {
             $s = Get-Service -Name $svc
             if ($s.Status -eq "Running") { break }
         }
-        if ($s.Status -eq "Running") { $color = "Green" } else { $color = "Yellow" }
-        Write-Host "  $svc - $($s.Status)" -ForegroundColor $color
-    } else {
-        Write-Host "  $svc - NOT FOUND (install may have failed)" -ForegroundColor Red
+        if ($s.Status -eq "Running") {
+            $started = $true
+            break
+        }
+        # Stop before retrying
+        & $nssm stop $svc 2>&1 | Out-Null
+        Start-Sleep -Seconds 3
     }
+
+    if ($started) {
+        Write-Host "  $svc - Running" -ForegroundColor Green
+    } else {
+        Write-Host "  $svc - FAILED after 3 attempts ($($s.Status))" -ForegroundColor Red
+        $allRunning = $false
+    }
+}
+
+if (-not $allRunning) {
+    Write-Host ""
+    Write-Host "  ==========================================" -ForegroundColor Red
+    Write-Host "   SOME SERVICES FAILED TO START            " -ForegroundColor Red
+    Write-Host "  ==========================================" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  Check logs at: $root\logs\" -ForegroundColor Yellow
+    Write-Host "  Then re-run this installer to try again." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  Press any key to close." -ForegroundColor DarkGray
+    $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") | Out-Null
+    exit 1
 }
 
 # ── Summary ──────────────────────────────────────────────────
