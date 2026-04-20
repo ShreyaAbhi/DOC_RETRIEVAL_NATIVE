@@ -254,8 +254,14 @@ foreach ($svc in $services) {
     $s = Get-Service -Name $svc -ErrorAction SilentlyContinue
     if ($s) {
         Start-Service -Name $svc -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 2
-        $s = Get-Service -Name $svc
+        # Wait up to 15 seconds for the service to reach Running state
+        $waited = 0
+        while ($waited -lt 15) {
+            Start-Sleep -Seconds 2
+            $waited += 2
+            $s = Get-Service -Name $svc
+            if ($s.Status -eq "Running") { break }
+        }
         if ($s.Status -eq "Running") { $color = "Green" } else { $color = "Yellow" }
         Write-Host "  $svc - $($s.Status)" -ForegroundColor $color
     } else {
