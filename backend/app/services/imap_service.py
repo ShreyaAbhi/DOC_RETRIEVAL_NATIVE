@@ -205,6 +205,35 @@ def _poll_mailbox_sync(
 # ---------------------------------------------------------------------------
 
 
+async def _notify_admins_reauth(db: AsyncSession, me: MonitoredEmail):
+    """Send email to all admins when a mailbox's OAuth token expires or is revoked."""
+    try:
+        from sqlalchemy import select
+        from app.models.models import User
+        from app.services.email_service import send_email
+
+        result = await db.execute(
+            select(User).where(User.role.in_(["admin", "super_admin"]), User.is_active == True)
+        )
+        admins = result.scalars().all()
+        if not admins:
+            return
+
+        subject = f"Action required: {me.email} mailbox authentication expired"
+        body = (
+            f"This is an automated alert from the POD Automation System.\n\n"
+            f"The monitored mailbox {me.email} has lost its Microsoft 365 authorization.\n"
+            f"Email polling for this mailbox has stopped.\n\n"
+            f"The mailbox owner has been sent a re-authorization link. "
+            f"If they do not act, you can resend the invitation from the admin Settings page.\n\n"
+            f"Error: {me.last_error or 'Authentication failed'}"
+        )
+        for admin in admins:
+            await send_email(db, to=admin.email, subject=subject, body=body)
+            logger.info("Reauth admin notification sent to %s for mailbox %s", admin.email, me.email)
+    except Exception as exc:
+        logger.warning("Failed to send reauth admin notification: %s", exc)
+
 
 async def poll_monitored_email(db: AsyncSession, me: MonitoredEmail) -> int:
     """
@@ -270,11 +299,18 @@ async def poll_monitored_email(db: AsyncSession, me: MonitoredEmail) -> int:
             or "INVALID CREDENTIALS" in msg
             or "XOAUTH2" in msg
         ):
+            prev_status = me.status
             me.status = "reauth_required"
+            await db.commit()
+            logger.error("IMAP poll failed for %s: %s", me.email, last_exc)
+
+            # Notify admins when a mailbox transitions to reauth_required
+            if prev_status != "reauth_required":
+                await _notify_admins_reauth(db, me)
         else:
             me.status = "error"
-        await db.commit()
-        logger.error("IMAP poll failed for %s: %s", me.email, last_exc)
+            await db.commit()
+            logger.error("IMAP poll failed for %s: %s", me.email, last_exc)
         return 0
 
     me.last_checked_at = datetime.now()

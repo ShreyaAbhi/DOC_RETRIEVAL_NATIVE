@@ -258,8 +258,12 @@ async def refresh_microsoft_token(db: AsyncSession, me: MonitoredEmail) -> str |
         refresh_token = decrypt_password(me.oauth_refresh_token)
     except Exception:
         me.last_error = "Failed to decrypt stored refresh token"
+        prev_status = me.status
         me.status = "reauth_required"
         await db.commit()
+        if prev_status != "reauth_required":
+            from app.services.imap_service import _notify_admins_reauth
+            await _notify_admins_reauth(db, me)
         return None
 
     token_url = TOKEN_URL_TMPL.format(tenant=cfg["microsoft_oauth_tenant"])
@@ -288,10 +292,14 @@ async def refresh_microsoft_token(db: AsyncSession, me: MonitoredEmail) -> str |
             err = resp.json().get("error", "")
         except Exception:
             err = ""
+        prev_status = me.status
         if err in ("invalid_grant", "invalid_client", "unauthorized_client"):
             me.status = "reauth_required"
         me.last_error = f"Refresh failed: {body}"
         await db.commit()
+        if me.status == "reauth_required" and prev_status != "reauth_required":
+            from app.services.imap_service import _notify_admins_reauth
+            await _notify_admins_reauth(db, me)
         return None
 
     payload = resp.json()
