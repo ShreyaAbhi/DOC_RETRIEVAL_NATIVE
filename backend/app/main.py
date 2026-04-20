@@ -113,12 +113,16 @@ async def _imap_poll_loop():
     from datetime import datetime, timezone, timedelta
     from sqlalchemy import select
     from app.db.session import AsyncSessionLocal
-    from app.models.models import MonitoredEmail
+    from app.models.models import MonitoredEmail, SystemConfig
     from app.services.imap_service import poll_monitored_email
 
     while True:
         try:
             async with AsyncSessionLocal() as db:
+                # Read the system-wide poll interval (seconds)
+                cfg = await db.get(SystemConfig, "email_check_interval")
+                loop_interval = int(cfg.value) if cfg and cfg.value else 60
+
                 result = await db.execute(
                     select(MonitoredEmail).where(
                         MonitoredEmail.status.in_(["active", "error"])
@@ -129,7 +133,7 @@ async def _imap_poll_loop():
                 for me in entries:
                     if not me.imap_host or (not me.imap_password and (me.auth_type or 'password') == 'password'):
                         continue
-                    interval = timedelta(minutes=me.check_interval_minutes or 5)
+                    interval = timedelta(seconds=loop_interval)
                     due = me.last_checked_at is None or (now - me.last_checked_at) >= interval
                     if due:
                         count = await poll_monitored_email(db, me)
@@ -139,7 +143,7 @@ async def _imap_poll_loop():
             raise
         except Exception as exc:
             logger.error("IMAP poll loop error: %s", exc)
-        await asyncio.sleep(60)
+        await asyncio.sleep(10)  # check frequently; actual interval controlled by email_check_interval
 
 
 async def _add_column(conn, sql: str):

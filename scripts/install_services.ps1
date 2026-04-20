@@ -180,7 +180,8 @@ if ($ollamaExe) {
         -DisplayName "DRS - Ollama (AI Engine)" `
         -Exe $ollamaExe `
         -Arguments "serve" `
-        -WorkingDir $root
+        -WorkingDir $root `
+        -Env @{ "OLLAMA_HOST" = "0.0.0.0:11434" }
     $ollamaInstalled = $true
 
     # Disable Ollama tray app auto-start to prevent conflicts with the service

@@ -174,6 +174,7 @@ def _poll_mailbox_sync(
             # Skip plain emails that don't match any subject filter
             if not _subject_matches(subject, subject_filters):
                 logger.debug("Skipping (no subject match): %s", subject)
+                conn.store(msg_num, "+FLAGS", "\\Seen")
                 continue
 
             results.append({
