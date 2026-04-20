@@ -293,8 +293,9 @@ async def _notify_already_responded(db: AsyncSession, req: EmailRequest, origina
     attachments = []
     if appr:
         import os
-        search_dirs = [settings.POD_STORAGE_PATH, settings.DOCUMENTS_PATH,
-                       settings.PACKING_SLIPS_PATH, settings.INVOICES_PATH]
+        search_dirs = [str(Path(p).resolve()) for p in [
+            settings.POD_STORAGE_PATH, settings.DOCUMENTS_PATH,
+            settings.PACKING_SLIPS_PATH, settings.INVOICES_PATH]]
         filenames = (appr.attachments_json or []) or [
             f for f in [appr.draft_attachment, appr.packing_slip_attachment, appr.invoice_attachment]
             if f
@@ -847,7 +848,7 @@ async def _find_packing_slip_in_db(db: AsyncSession,
     if existing:
         return existing
 
-    folder = Path(settings.PACKING_SLIPS_PATH)
+    folder = Path(settings.PACKING_SLIPS_PATH).resolve()
     if not folder.exists():
         return None
 
@@ -912,7 +913,7 @@ async def _find_invoice_in_db(db: AsyncSession,
     if existing:
         return existing
 
-    folder = Path(settings.INVOICES_PATH)
+    folder = Path(settings.INVOICES_PATH).resolve()
     if not folder.exists():
         return None
 
@@ -1634,8 +1635,13 @@ async def _auto_send_response(db: AsyncSession, req: EmailRequest,
     from app.services.email_service import send_email
     import os
 
-    # Filter to only paths that actually exist on disk
-    valid_paths = [p for p in attachment_paths if os.path.exists(p)]
+    # Resolve and filter to only paths that actually exist on disk
+    import logging
+    _log = logging.getLogger(__name__)
+    resolved = [str(Path(p).resolve()) if not os.path.isabs(p) else p for p in attachment_paths]
+    valid_paths = [p for p in resolved if os.path.exists(p)]
+    if not valid_paths and attachment_paths:
+        _log.warning("Auto-send: none of the attachment paths exist: %s", attachment_paths)
 
     send_result = await send_email(
         db,

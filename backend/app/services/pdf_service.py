@@ -7,13 +7,13 @@ from pathlib import Path
 
 from app.core.config import settings
 
-DOCS_PATH = Path(settings.DOCUMENTS_PATH)
+DOCS_PATH = Path(settings.DOCUMENTS_PATH).resolve()
 DOCS_PATH.mkdir(parents=True, exist_ok=True)
 
-PS_PATH = Path(settings.PACKING_SLIPS_PATH)
+PS_PATH = Path(settings.PACKING_SLIPS_PATH).resolve()
 PS_PATH.mkdir(parents=True, exist_ok=True)
 
-INV_PATH = Path(settings.INVOICES_PATH)
+INV_PATH = Path(settings.INVOICES_PATH).resolve()
 INV_PATH.mkdir(parents=True, exist_ok=True)
 
 
