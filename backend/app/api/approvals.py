@@ -87,27 +87,32 @@ async def action_approval(
             if body.modified_body:
                 req.response_body = body.modified_body
 
-            # Build attachment list — resolve filenames to full paths.
-            # Use attachments_json (multi-order) if present, else fall back to
-            # the three individual columns (single-order / legacy).
+            # Build attachment list from stored file paths.
+            # attachments_json now stores full file paths; fall back to
+            # directory search for legacy entries that only stored filenames.
             all_search_dirs = [
                 settings.POD_STORAGE_PATH,
                 settings.DOCUMENTS_PATH,
                 settings.PACKING_SLIPS_PATH,
                 settings.INVOICES_PATH,
             ]
-            filenames = (appr.attachments_json or []) or [
+            entries = (appr.attachments_json or []) or [
                 f for f in [appr.draft_attachment,
                              appr.packing_slip_attachment,
                              appr.invoice_attachment]
                 if f
             ]
             attachments = []
-            for filename in filenames:
-                if not filename:
+            for entry in entries:
+                if not entry:
                     continue
+                # If the entry is a full path that exists, use it directly
+                if os.path.exists(entry):
+                    attachments.append(entry)
+                    continue
+                # Fallback: search storage directories (legacy filename-only entries)
                 for folder in all_search_dirs:
-                    candidate = os.path.join(folder, filename)
+                    candidate = os.path.join(folder, entry)
                     if os.path.exists(candidate):
                         attachments.append(candidate)
                         break

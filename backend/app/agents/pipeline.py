@@ -1601,32 +1601,20 @@ def _qualifies_for_auto_send(req: EmailRequest, pod, ps, inv, cfg: dict) -> bool
 
 
 async def _auto_send_response(db: AsyncSession, req: EmailRequest,
-                               attachments_json: list[str]) -> None:
+                               attachment_paths: list[str]) -> None:
     """Send the response email immediately, bypassing the approval queue."""
     from app.services.email_service import send_email
-    from app.core.config import settings
     import os
 
-    all_search_dirs = [
-        settings.POD_STORAGE_PATH,
-        settings.DOCUMENTS_PATH,
-        settings.PACKING_SLIPS_PATH,
-        settings.INVOICES_PATH,
-    ]
-    attachment_paths = []
-    for filename in attachments_json:
-        for folder in all_search_dirs:
-            candidate = os.path.join(folder, filename)
-            if os.path.exists(candidate):
-                attachment_paths.append(candidate)
-                break
+    # Filter to only paths that actually exist on disk
+    valid_paths = [p for p in attachment_paths if os.path.exists(p)]
 
     send_result = await send_email(
         db,
         to=req.from_email,
         subject=req.response_subject or f"Re: {req.subject}",
         body=req.response_body or "",
-        attachments=attachment_paths or None,
+        attachments=valid_paths or None,
     )
 
     req.status = "completed"
@@ -1638,7 +1626,8 @@ async def _auto_send_response(db: AsyncSession, req: EmailRequest,
     sent_ok = send_result.get("sent", False)
     await log_audit(db, req.id, "auto_approved",
                     "Auto-approved: required documents present and confidence threshold met",
-                    {"attachments": attachments_json, "confidence": float(req.confidence_score or 0)},
+                    {"attachments": [os.path.basename(p) for p in valid_paths],
+                     "confidence": float(req.confidence_score or 0)},
                     success=True)
     await log_audit(
         db, req.id, "email_sent",
@@ -1646,7 +1635,7 @@ async def _auto_send_response(db: AsyncSession, req: EmailRequest,
         {
             "to": req.from_email,
             "subject": req.response_subject,
-            "attachments": [os.path.basename(a) for a in attachment_paths],
+            "attachments": [os.path.basename(a) for a in valid_paths],
             "message_id": send_result.get("message_id"),
             "error": send_result.get("error"),
         },
@@ -1660,15 +1649,21 @@ async def _request_approval(db: AsyncSession, req: EmailRequest,
                              pod: Optional[PodDocument],
                              ps: Optional[PackingSlipDocument],
                              inv: Optional[InvoiceDocument]):
-    attachments_json = [f for f in [
+    attachment_filenames = [f for f in [
         pod.file_name if pod else None,
         ps.file_name  if ps  else None,
         inv.file_name if inv else None,
     ] if f]
 
+    attachment_paths = [p for p in [
+        pod.file_path if pod else None,
+        ps.file_path  if ps  else None,
+        inv.file_path if inv else None,
+    ] if p]
+
     cfg = await _load_auto_send_settings(db)
     if _qualifies_for_auto_send(req, pod, ps, inv, cfg):
-        await _auto_send_response(db, req, attachments_json)
+        await _auto_send_response(db, req, attachment_paths)
         return
 
     await _update_status(db, req, "awaiting_approval")
@@ -1679,7 +1674,7 @@ async def _request_approval(db: AsyncSession, req: EmailRequest,
         draft_attachment=pod.file_name if pod else None,
         packing_slip_attachment=ps.file_name if ps else None,
         invoice_attachment=inv.file_name if inv else None,
-        attachments_json=attachments_json,
+        attachments_json=attachment_paths,
     )
     db.add(approval)
     await db.flush()
@@ -1690,14 +1685,14 @@ async def _request_approval(db: AsyncSession, req: EmailRequest,
 
 # ── Step 5b: Request approval (multi-order) ───────────────────
 async def _request_approval_multi(db: AsyncSession, req: EmailRequest, results: list):
-    """Store all unique attachment filenames in attachments_json."""
+    """Store all unique attachment file paths in attachments_json."""
     seen: set[str] = set()
-    attachments_json: list[str] = []
+    attachment_paths: list[str] = []
     for _, _, pod, ps, inv in results:
         for doc in [pod, ps, inv]:
-            if doc and doc.file_name not in seen:
-                seen.add(doc.file_name)
-                attachments_json.append(doc.file_name)
+            if doc and doc.file_path and doc.file_path not in seen:
+                seen.add(doc.file_path)
+                attachment_paths.append(doc.file_path)
 
     # Check auto-send: all orders must satisfy the configured document requirements
     cfg = await _load_auto_send_settings(db)
@@ -1706,7 +1701,7 @@ async def _request_approval_multi(db: AsyncSession, req: EmailRequest, results: 
         for _, _, pod, ps, inv in results
     )
     if all_qualify:
-        await _auto_send_response(db, req, attachments_json)
+        await _auto_send_response(db, req, attachment_paths)
         return
 
     await _update_status(db, req, "awaiting_approval")
@@ -1723,7 +1718,7 @@ async def _request_approval_multi(db: AsyncSession, req: EmailRequest, results: 
         draft_attachment=first_pod.file_name if first_pod else None,
         packing_slip_attachment=first_ps.file_name if first_ps else None,
         invoice_attachment=first_inv.file_name if first_inv else None,
-        attachments_json=attachments_json,
+        attachments_json=attachment_paths,
     )
     db.add(approval)
     await db.flush()

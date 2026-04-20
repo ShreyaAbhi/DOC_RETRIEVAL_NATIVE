@@ -2,6 +2,7 @@
 email_service.py
 Handles outbound SMTP email (Outlook / Office365 compatible).
 """
+import os
 import re
 import smtplib
 import logging
@@ -120,7 +121,7 @@ async def send_email(
                         part = MIMEBase('application', 'octet-stream')
                         part.set_payload(f.read())
                     encoders.encode_base64(part)
-                    part.add_header('Content-Disposition', f'attachment; filename="{path.split("/")[-1]}"')
+                    part.add_header('Content-Disposition', f'attachment; filename="{os.path.basename(path)}"')
                     msg.attach(part)
                 except Exception as e:
                     logger.error(f"Failed to attach {path}: {e}")

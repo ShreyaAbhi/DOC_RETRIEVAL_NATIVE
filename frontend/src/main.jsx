@@ -1727,7 +1727,8 @@ function Approvals() {
                   <div className={cn('text-xs mt-0.5', dark ? 'text-slate-500' : 'text-gray-800')}>From: {a.request?.from_email} · Order: {a.request?.extracted_order_id || '–'} · Confidence: {a.request?.confidence_score || '–'}%</div>
                 </div>
                 <div className="flex gap-2 flex-wrap">
-                  {(a.attachments_json?.length ? a.attachments_json : [a.draft_attachment, a.packing_slip_attachment, a.invoice_attachment].filter(Boolean)).map(fname => {
+                  {(a.attachments_json?.length ? a.attachments_json : [a.draft_attachment, a.packing_slip_attachment, a.invoice_attachment].filter(Boolean)).map(raw => {
+                    const fname = raw.split(/[/\\]/).pop() || raw;
                     const n = fname.toLowerCase();
                     const { label, color } = n.startsWith('pod_') || n.includes('_pod') ? { label: 'POD', color: 'text-green-400' }
                       : n.startsWith('pl_') || n.includes('slip') || n.includes('packing') ? { label: 'Slip', color: 'text-blue-400' }
@@ -1770,7 +1771,8 @@ function Approvals() {
                   )}
                   <div className="flex flex-col gap-1.5">
                     <div className={cn('text-xs font-mono uppercase tracking-widest', dark ? 'text-slate-500' : 'text-gray-800')}>Attachments</div>
-                    {(a.attachments_json?.length ? a.attachments_json : [a.draft_attachment, a.packing_slip_attachment, a.invoice_attachment].filter(Boolean)).map(fname => {
+                    {(a.attachments_json?.length ? a.attachments_json : [a.draft_attachment, a.packing_slip_attachment, a.invoice_attachment].filter(Boolean)).map(raw => {
+                      const fname = raw.split(/[/\\]/).pop() || raw;
                       const n = fname.toLowerCase();
                       const { label, iconColor, textColor } = n.startsWith('pod_') || n.includes('_pod')
                         ? { label: 'POD', iconColor: 'text-green-400', textColor: 'text-green-500' }
