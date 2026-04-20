@@ -116,6 +116,7 @@ async def _imap_poll_loop():
     from app.models.models import MonitoredEmail, SystemConfig
     from app.services.imap_service import poll_monitored_email
 
+    logger.info("IMAP poll loop started")
     while True:
         try:
             async with AsyncSessionLocal() as db:
@@ -136,13 +137,14 @@ async def _imap_poll_loop():
                     interval = timedelta(seconds=loop_interval)
                     due = me.last_checked_at is None or (now - me.last_checked_at) >= interval
                     if due:
+                        logger.info("IMAP: polling %s (interval=%ds)", me.email, loop_interval)
                         count = await poll_monitored_email(db, me)
                         if count:
                             logger.info("IMAP: ingested %d email(s) from %s", count, me.email)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            logger.error("IMAP poll loop error: %s", exc)
+            logger.error("IMAP poll loop error: %s", exc, exc_info=True)
         await asyncio.sleep(10)  # check frequently; actual interval controlled by email_check_interval
 
 
@@ -502,10 +504,13 @@ async def _sync_version_from_file():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    logger.info("Lifespan startup: running migrations...")
     await _run_migrations()
     await _sync_version_from_file()
+    logger.info("Lifespan startup: creating background tasks...")
     imap_task     = asyncio.create_task(_imap_poll_loop())
     autopoll_task = asyncio.create_task(_autopoll_loop())
+    logger.info("Lifespan startup complete: IMAP poll and autopoll tasks running")
     yield
     for task in (imap_task, autopoll_task):
         task.cancel()

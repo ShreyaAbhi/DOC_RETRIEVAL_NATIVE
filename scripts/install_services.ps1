@@ -205,14 +205,24 @@ Install-Service `
     -WorkingDir "$root\backend" `
     -Env @{ "TESSERACT_CMD" = "C:\Program Files\Tesseract-OCR\tesseract.exe" }
 
-# Check if Redis is installed as a Windows service
+# Check if Redis is installed as a Windows service and ensure it is running
 $redisService = Get-Service -Name "Redis" -ErrorAction SilentlyContinue
 if ($redisService) {
-    Write-Host "  Redis service found - setting service dependencies" -ForegroundColor DarkGray
+    if ($redisService.Status -ne "Running") {
+        Write-Host "  Starting Redis service..." -ForegroundColor Yellow
+        Start-Service -Name "Redis" -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 3
+        $redisService = Get-Service -Name "Redis" -ErrorAction SilentlyContinue
+    }
+    if ($redisService.Status -eq "Running") {
+        Write-Host "  Redis service is running" -ForegroundColor Green
+    } else {
+        Write-Host "  WARNING: Redis service exists but could not be started" -ForegroundColor Red
+    }
     & $nssm set "$serviceName-Backend" DependOnService "Redis" 2>&1 | Out-Null
 } else {
-    Write-Host "  Redis service not found - skipping service dependencies" -ForegroundColor Yellow
-    Write-Host "    Ensure Redis is running before starting DRS services." -ForegroundColor DarkGray
+    Write-Host "  WARNING: Redis service not found!" -ForegroundColor Red
+    Write-Host "    Celery Worker and Beat require Redis. Install with: winget install Redis.Redis" -ForegroundColor Yellow
 }
 
 # 3. Celery Worker
