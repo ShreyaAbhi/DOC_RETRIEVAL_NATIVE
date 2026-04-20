@@ -1640,7 +1640,7 @@ function Requests() {
               { key: '_select', header: <input type="checkbox" onChange={toggleAll} checked={selectedIds.size > 0 && selectedIds.size === (serverSearchData ?? (reqs || [])).length} ref={el => { if (el) el.indeterminate = selectedIds.size > 0 && selectedIds.size < (serverSearchData ?? (reqs || [])).length }} />, width: '40px', sortable: false, filterable: false,
                 render: r => <input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelect(r.id)} onClick={e => e.stopPropagation()} /> },
               { key: 'reference_number', header: 'Reference', width: '140px',
-                render: r => <span className={cn('font-mono text-sm cursor-pointer hover:underline select-none', dark?'text-cyan-400':'text-cyan-700 font-semibold')} onDoubleClick={() => setDetailId(r.id)} onClick={() => setDetailId(r.id)} title="Click to inspect">{r.reference_number}</span> },
+                render: r => <span className={cn('font-mono text-sm cursor-pointer hover:underline', dark?'text-cyan-400':'text-cyan-700 font-semibold')} onDoubleClick={() => setDetailId(r.id)} onClick={() => setDetailId(r.id)} title="Click to inspect">{r.reference_number}</span> },
               { key: 'from_email', header: 'From', tdClass: dark?'text-slate-400':'text-gray-800' },
               { key: 'subject', header: 'Subject', tdClass: dark?'text-slate-300':'text-gray-800', sortVal: r => r.subject || '' },
               { key: 'extracted_order_id', header: 'Order', width: '120px',
@@ -2888,7 +2888,7 @@ function Reports() {
           onExcel={() => { const h=['Reference','From','Intent','Order','Status','Confidence','Guidance','Received','Completed']; exportExcel('report_requests',(rptReqs||[]).map(r=>[r.reference_number,r.from_email,r.intent,r.extracted_order_id,r.status,r.confidence_score,r.requires_guidance,r.received_at,r.completed_at]),h) }}
           columns={[
             { key: 'reference_number', header: 'Reference', width: '140px',
-              render: r => <span className={cn('font-mono text-sm cursor-pointer hover:underline select-none', dark?'text-cyan-400':'text-cyan-700 font-semibold')} onClick={() => setDetailId(r.id)} title="Click to inspect">{r.reference_number}</span> },
+              render: r => <span className={cn('font-mono text-sm cursor-pointer hover:underline', dark?'text-cyan-400':'text-cyan-700 font-semibold')} onClick={() => setDetailId(r.id)} title="Click to inspect">{r.reference_number}</span> },
             { key: 'from_email', header: 'From', tdClass: dark?'text-slate-400 text-sm':'text-gray-800 text-sm' },
             { key: 'intent', header: 'Intent', width: '130px',
               render: r => <span className={cn('font-mono text-sm', dark?'text-purple-400':'text-purple-700')}>{r.intent || '–'}</span>,
