@@ -5288,9 +5288,9 @@ function SetupEmailPage() {
             <Input label="Username / Email *" value={form.imap_user} onChange={v => setForm(f => ({...f, imap_user: v}))} placeholder={info.email} />
             <Input label="Password or App Password *" type="password" value={form.imap_password} onChange={v => setForm(f => ({...f, imap_password: v}))} placeholder="••••••••" />
 
-            <div className="grid grid-cols-2 gap-3">
-              <Input label="Mailbox Folder" value={form.mailbox_folder} onChange={v => setForm(f => ({...f, mailbox_folder: v}))} placeholder="INBOX" />
-              <Input label="Check Every (minutes)" value={String(form.check_interval_minutes)} onChange={v => setForm(f => ({...f, check_interval_minutes: v}))} placeholder="5" />
+            <Input label="Mailbox Folder" value={form.mailbox_folder} onChange={v => setForm(f => ({...f, mailbox_folder: v}))} placeholder="INBOX" />
+            <div className={cn('text-xs', dark ? 'text-slate-500' : 'text-gray-400')}>
+              Polling interval is controlled by the <strong>email_check_interval</strong> setting on the Settings page.
             </div>
 
             <label className="flex items-center gap-2 cursor-pointer select-none">
