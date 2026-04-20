@@ -152,36 +152,29 @@ Write-Host ""
 Write-Host "  Installing services..." -ForegroundColor Cyan
 Write-Host ""
 
-# 1. Ollama - check if already running (process OR port) before installing as service
+# 1. Ollama - stop any user-mode instance and install as a proper service
 $ollamaInstalled = $false
-$ollamaAlreadyRunning = $false
 
-# Check 1: Is the Ollama API already responding on port 11434?
-$ollamaApiUp = $false
-try {
-    $resp = Invoke-WebRequest -Uri "http://localhost:11434" -TimeoutSec 3 -UseBasicParsing -ErrorAction Stop
-    if ($resp.StatusCode -lt 500) { $ollamaApiUp = $true }
-} catch {}
-
-# Check 2: Is there an Ollama process running (tray app or manual)?
+# Stop Ollama tray app / user processes so we can run it as a service
 $ollamaProc = Get-Process -Name "ollama*" -ErrorAction SilentlyContinue
-
-if ($ollamaApiUp -or $ollamaProc) {
-    $ollamaAlreadyRunning = $true
-    if ($ollamaApiUp) {
-        Write-Host "  Ollama API is already responding on localhost:11434" -ForegroundColor Green
+if ($ollamaProc) {
+    Write-Host "  Stopping Ollama tray app / user processes..." -ForegroundColor Yellow
+    $ollamaProc | ForEach-Object {
+        Write-Host "    Stopping $($_.ProcessName) (PID $($_.Id))..." -ForegroundColor DarkGray
+        Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Seconds 3
+    # Verify all stopped
+    $remaining = Get-Process -Name "ollama*" -ErrorAction SilentlyContinue
+    if ($remaining) {
+        Write-Host "  WARNING: Some Ollama processes could not be stopped." -ForegroundColor Red
+        Write-Host "    Please close Ollama from the system tray and re-run this installer." -ForegroundColor Red
     } else {
-        Write-Host "  Ollama process detected (PID $($ollamaProc[0].Id))" -ForegroundColor Green
+        Write-Host "  Ollama user processes stopped." -ForegroundColor Green
     }
-    Write-Host "    Skipping DRS-Ollama service - Ollama is already managed externally." -ForegroundColor DarkGray
-    # Remove any leftover DRS-Ollama service to avoid conflicts
-    $existingOllama = Get-Service -Name "$serviceName-Ollama" -ErrorAction SilentlyContinue
-    if ($existingOllama) {
-        Write-Host "    Removing old DRS-Ollama service to prevent conflicts..." -ForegroundColor Yellow
-        & $nssm stop "$serviceName-Ollama" 2>&1 | Out-Null
-        & $nssm remove "$serviceName-Ollama" confirm 2>&1 | Out-Null
-    }
-} elseif ($ollamaExe) {
+}
+
+if ($ollamaExe) {
     Install-Service `
         -Name "$serviceName-Ollama" `
         -DisplayName "DRS - Ollama (AI Engine)" `
@@ -189,6 +182,14 @@ if ($ollamaApiUp -or $ollamaProc) {
         -Arguments "serve" `
         -WorkingDir $root
     $ollamaInstalled = $true
+
+    # Disable Ollama tray app auto-start to prevent conflicts with the service
+    $startupReg = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+    $ollamaStartup = Get-ItemProperty -Path $startupReg -Name "Ollama" -ErrorAction SilentlyContinue
+    if ($ollamaStartup) {
+        Remove-ItemProperty -Path $startupReg -Name "Ollama" -ErrorAction SilentlyContinue
+        Write-Host "  Disabled Ollama tray app auto-start (now runs as service instead)" -ForegroundColor DarkGray
+    }
 } else {
     Write-Host "  Skipping Ollama - not found in any standard location" -ForegroundColor Yellow
     Write-Host "    Checked: $($ollamaCandidates -join ', ')" -ForegroundColor DarkGray
@@ -246,9 +247,6 @@ if ($redisService) {
 Write-Host ""
 Write-Host "  Starting services..." -ForegroundColor Cyan
 
-if ($ollamaAlreadyRunning) {
-    Write-Host "  Ollama - Running (user process)" -ForegroundColor Green
-}
 $services = @("$serviceName-Backend", "$serviceName-Worker", "$serviceName-Beat")
 if ($ollamaInstalled) { $services = @("$serviceName-Ollama") + $services }
 foreach ($svc in $services) {
