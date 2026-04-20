@@ -19,6 +19,27 @@ Write-Host ""
 Write-Host "  Install path: $root" -ForegroundColor DarkGray
 Write-Host ""
 
+# ── Step 0: Stop all existing DRS services before making changes ──
+$existingServices = Get-Service -Name "DRS-*" -ErrorAction SilentlyContinue
+if ($existingServices) {
+    Write-Host "  Stopping existing DRS services..." -ForegroundColor Yellow
+    foreach ($es in $existingServices) {
+        Write-Host "    Stopping $($es.Name)..." -ForegroundColor DarkGray -NoNewline
+        Stop-Service -Name $es.Name -Force -ErrorAction SilentlyContinue
+        $waited = 0
+        while ($waited -lt 10) {
+            $es = Get-Service -Name $es.Name -ErrorAction SilentlyContinue
+            if ($es.Status -eq "Stopped") { break }
+            Start-Sleep -Seconds 2; $waited += 2
+        }
+        Write-Host " $($es.Status)" -ForegroundColor $(if ($es.Status -eq "Stopped") { "Green" } else { "Yellow" })
+    }
+    # Wait for ports to be released
+    Start-Sleep -Seconds 3
+    Write-Host "  All existing services stopped." -ForegroundColor Green
+    Write-Host ""
+}
+
 # ── Step 1: Download NSSM if not present ─────────────────────
 if (-not (Test-Path $nssm)) {
     Write-Host "  Downloading NSSM..." -ForegroundColor Yellow
@@ -128,9 +149,9 @@ function Install-Service {
     & $nssm set $Name AppStopMethodConsole 5000 2>&1 | Out-Null
     & $nssm set $Name AppStopMethodWindow 5000 2>&1 | Out-Null
     & $nssm set $Name AppStopMethodThreads 5000 2>&1 | Out-Null
-    # Always restart on crash with a 5-second delay
+    # Always restart on crash with a 15-second delay (allows port release)
     & $nssm set $Name AppExit Default Restart 2>&1 | Out-Null
-    & $nssm set $Name AppRestartDelay 5000 2>&1 | Out-Null
+    & $nssm set $Name AppRestartDelay 15000 2>&1 | Out-Null
 
     # Log files
     $logDir = "$root\logs"
