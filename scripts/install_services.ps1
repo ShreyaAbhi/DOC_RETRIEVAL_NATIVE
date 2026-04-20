@@ -152,14 +152,35 @@ Write-Host ""
 Write-Host "  Installing services..." -ForegroundColor Cyan
 Write-Host ""
 
-# 1. Ollama - check if already running before installing as a service
+# 1. Ollama - check if already running (process OR port) before installing as service
 $ollamaInstalled = $false
 $ollamaAlreadyRunning = $false
-$ollamaProc = Get-Process -Name "ollama" -ErrorAction SilentlyContinue
-if ($ollamaProc) {
+
+# Check 1: Is the Ollama API already responding on port 11434?
+$ollamaApiUp = $false
+try {
+    $resp = Invoke-WebRequest -Uri "http://localhost:11434" -TimeoutSec 3 -UseBasicParsing -ErrorAction Stop
+    if ($resp.StatusCode -lt 500) { $ollamaApiUp = $true }
+} catch {}
+
+# Check 2: Is there an Ollama process running (tray app or manual)?
+$ollamaProc = Get-Process -Name "ollama*" -ErrorAction SilentlyContinue
+
+if ($ollamaApiUp -or $ollamaProc) {
     $ollamaAlreadyRunning = $true
-    Write-Host "  Ollama is already running (user process, PID $($ollamaProc.Id))" -ForegroundColor Green
-    Write-Host "    Skipping DRS-Ollama service - not needed while Ollama runs via system tray." -ForegroundColor DarkGray
+    if ($ollamaApiUp) {
+        Write-Host "  Ollama API is already responding on localhost:11434" -ForegroundColor Green
+    } else {
+        Write-Host "  Ollama process detected (PID $($ollamaProc[0].Id))" -ForegroundColor Green
+    }
+    Write-Host "    Skipping DRS-Ollama service - Ollama is already managed externally." -ForegroundColor DarkGray
+    # Remove any leftover DRS-Ollama service to avoid conflicts
+    $existingOllama = Get-Service -Name "$serviceName-Ollama" -ErrorAction SilentlyContinue
+    if ($existingOllama) {
+        Write-Host "    Removing old DRS-Ollama service to prevent conflicts..." -ForegroundColor Yellow
+        & $nssm stop "$serviceName-Ollama" 2>&1 | Out-Null
+        & $nssm remove "$serviceName-Ollama" confirm 2>&1 | Out-Null
+    }
 } elseif ($ollamaExe) {
     Install-Service `
         -Name "$serviceName-Ollama" `
