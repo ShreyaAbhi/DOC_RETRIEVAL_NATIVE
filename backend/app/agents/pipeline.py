@@ -757,10 +757,11 @@ async def _ensure_pod_file(db: AsyncSession, pod: PodDocument) -> PodDocument:
                 tracking=pod.tracking_number or "UNKNOWN",
                 ups_data=pod.raw_api_response,
             )
-        elif pod.tracking_number:
+        elif pod.tracking_number and settings.UPS_CLIENT_ID and settings.UPS_CLIENT_SECRET:
             # Re-call carrier API to fetch fresh data
             _log.info("No cached response for %s — re-calling carrier API", pod.tracking_number)
-            ups_data = await _ups_track(pod.tracking_number)
+            token = await _ups_get_token()
+            ups_data = await _ups_track(token, pod.tracking_number)
             new_path, new_name = await generate_pod_pdf(
                 order_id=str(pod.tracking_number),
                 tracking=pod.tracking_number,

@@ -161,6 +161,20 @@ async def _add_column(conn, sql: str):
 
 async def _run_migrations():
     """Apply any DDL migrations that are safe to run on every startup (idempotent)."""
+    for attempt in range(5):
+        try:
+            await _run_migrations_inner()
+            return
+        except Exception as exc:
+            if "database is locked" in str(exc).lower() and attempt < 4:
+                logger.warning("Migration attempt %d failed (database locked), retrying in %ds...", attempt + 1, (attempt + 1) * 3)
+                await asyncio.sleep((attempt + 1) * 3)
+            else:
+                raise
+
+
+async def _run_migrations_inner():
+    """Apply any DDL migrations that are safe to run on every startup (idempotent)."""
     from sqlalchemy import text
     from app.models.models import Base
 
