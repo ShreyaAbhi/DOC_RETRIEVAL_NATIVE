@@ -203,8 +203,15 @@ Install-Service `
     -WorkingDir "$root\backend" `
     -Env @{ "TESSERACT_CMD" = "C:\Program Files\Tesseract-OCR\tesseract.exe" }
 
-# Set service dependency: Backend starts after Redis
-& $nssm set "$serviceName-Backend" DependOnService "Redis" 2>&1 | Out-Null
+# Check if Redis is installed as a Windows service
+$redisService = Get-Service -Name "Redis" -ErrorAction SilentlyContinue
+if ($redisService) {
+    Write-Host "  Redis service found - setting service dependencies" -ForegroundColor DarkGray
+    & $nssm set "$serviceName-Backend" DependOnService "Redis" 2>&1 | Out-Null
+} else {
+    Write-Host "  Redis service not found - skipping service dependencies" -ForegroundColor Yellow
+    Write-Host "    Ensure Redis is running before starting DRS services." -ForegroundColor DarkGray
+}
 
 # 3. Celery Worker
 Install-Service `
@@ -215,8 +222,12 @@ Install-Service `
     -WorkingDir "$root\backend" `
     -Env @{ "TESSERACT_CMD" = "C:\Program Files\Tesseract-OCR\tesseract.exe" }
 
-# Worker depends on Redis and Backend
-& $nssm set "$serviceName-Worker" DependOnService "Redis" "$serviceName-Backend" 2>&1 | Out-Null
+# Worker depends on Backend (and Redis if available)
+if ($redisService) {
+    & $nssm set "$serviceName-Worker" DependOnService "Redis" "$serviceName-Backend" 2>&1 | Out-Null
+} else {
+    & $nssm set "$serviceName-Worker" DependOnService "$serviceName-Backend" 2>&1 | Out-Null
+}
 
 # 4. Celery Beat
 Install-Service `
@@ -226,8 +237,10 @@ Install-Service `
     -Arguments "-A app.core.celery_app beat --loglevel=info" `
     -WorkingDir "$root\backend"
 
-# Beat depends on Redis
-& $nssm set "$serviceName-Beat" DependOnService "Redis" 2>&1 | Out-Null
+# Beat depends on Redis if available
+if ($redisService) {
+    & $nssm set "$serviceName-Beat" DependOnService "Redis" 2>&1 | Out-Null
+}
 
 # ── Start all services ───────────────────────────────────────
 Write-Host ""
@@ -246,6 +259,8 @@ foreach ($svc in $services) {
         $s = Get-Service -Name $svc
         if ($s.Status -eq "Running") { $color = "Green" } else { $color = "Yellow" }
         Write-Host "  $svc - $($s.Status)" -ForegroundColor $color
+    } else {
+        Write-Host "  $svc - NOT FOUND (install may have failed)" -ForegroundColor Red
     }
 }
 
