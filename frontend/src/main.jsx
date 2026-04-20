@@ -675,6 +675,11 @@ function Dashboard() {
     queryKey: ['reqs-recent', excludeDeleted],
     queryFn: () => API.get(`/requests?limit=8&include_deleted=${!excludeDeleted}`).then(r => r.data),
   })
+  const { data: monEmails } = useQuery({
+    queryKey: ['monitored-emails'],
+    queryFn: () => API.get('/monitored-emails').then(r => r.data).catch(() => []),
+  })
+  const reauthEmails = (monEmails || []).filter(e => e.status === 'reauth_required')
 
   const STATUS_COLORS = {
     completed:          '#39d98a',
@@ -714,6 +719,19 @@ function Dashboard() {
           </label>
         }
       />
+
+      {reauthEmails.length > 0 && (
+        <div className={cn('flex items-center gap-3 p-4 rounded-lg border',
+          dark ? 'bg-orange-500/10 border-orange-500/30 text-orange-300' : 'bg-orange-50 border-orange-200 text-orange-800')}>
+          <AlertCircle size={18} className="flex-shrink-0"/>
+          <div className="flex-1">
+            <div className="font-medium text-sm">Email authentication expired</div>
+            <div className="text-xs mt-0.5 opacity-80">
+              {reauthEmails.map(e => e.email).join(', ')} — email polling has stopped. Go to <a href="#/monitored-emails" className="underline font-medium">Email Monitors</a> to re-authorize.
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard icon={Activity}    label="Total Requests"  value={summary?.total_requests || 0}           color="cyan" />
@@ -4954,15 +4972,30 @@ function MonitoredEmailsPage() {
   })
 
   const STATUS_COLOR = {
-    pending:  dark ? 'text-yellow-400 bg-yellow-400/10' : 'text-yellow-700 bg-yellow-100',
-    active:   dark ? 'text-green-400 bg-green-400/10'  : 'text-green-700 bg-green-100',
-    disabled: dark ? 'text-slate-500 bg-slate-500/10'  : 'text-gray-500 bg-gray-100',
-    error:    dark ? 'text-red-400 bg-red-400/10'       : 'text-red-700 bg-red-100',
+    pending:          dark ? 'text-yellow-400 bg-yellow-400/10' : 'text-yellow-700 bg-yellow-100',
+    active:           dark ? 'text-green-400 bg-green-400/10'  : 'text-green-700 bg-green-100',
+    disabled:         dark ? 'text-slate-500 bg-slate-500/10'  : 'text-gray-500 bg-gray-100',
+    error:            dark ? 'text-red-400 bg-red-400/10'       : 'text-red-700 bg-red-100',
+    reauth_required:  dark ? 'text-orange-400 bg-orange-400/15 animate-pulse' : 'text-orange-700 bg-orange-100 animate-pulse',
   }
 
   return (
     <div>
       <SectionHeader title="Email Monitors" subtitle="Mailboxes monitored for inbound POD requests" />
+
+      {/* Reauth alert banner */}
+      {emails?.filter(e => e.status === 'reauth_required').length > 0 && (
+        <div className={cn('flex items-center gap-3 p-4 mb-4 rounded-lg border',
+          dark ? 'bg-orange-500/10 border-orange-500/30 text-orange-300' : 'bg-orange-50 border-orange-200 text-orange-800')}>
+          <AlertCircle size={18} className="flex-shrink-0"/>
+          <div className="flex-1">
+            <div className="font-medium text-sm">Authentication expired</div>
+            <div className="text-xs mt-0.5 opacity-80">
+              {emails.filter(e => e.status === 'reauth_required').map(e => e.email).join(', ')} — email polling has stopped for {emails.filter(e => e.status === 'reauth_required').length === 1 ? 'this mailbox' : 'these mailboxes'}. The mailbox owner needs to re-authorize via the invite link, or use "Refresh Token" below.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add form */}
       {showAdd ? (
