@@ -294,10 +294,12 @@ async def poll_monitored_email(db: AsyncSession, me: MonitoredEmail) -> int:
             continue
 
         if em.get("is_pod_delivery") and em.get("pdf_attachments"):
-            # This is an incoming POD from a carrier — handle separately
-            await _handle_pod_reply(db, em)
-            count += 1
-            continue
+            # This is an incoming email with PDF attachments — check if it's a
+            # carrier POD reply. If nothing matched, fall through to normal processing.
+            handled = await _handle_pod_reply(db, em)
+            if handled:
+                count += 1
+                continue
 
         # Deduplicate by IMAP Message-ID — skip if already ingested
         msg_id = em.get("message_id") or None
@@ -378,11 +380,14 @@ async def poll_monitored_email(db: AsyncSession, me: MonitoredEmail) -> int:
     return count
 
 
-async def _handle_pod_reply(db: AsyncSession, em: dict):
+async def _handle_pod_reply(db: AsyncSession, em: dict) -> bool:
     """
     Process an incoming email that has PDF attachments — treat it as a carrier
     POD delivery. Extract delivery numbers from subject/body, save the PDFs,
     and resume any awaiting_pod pipeline requests.
+
+    Returns True if at least one attachment was saved (email was handled).
+    Returns False if nothing matched — caller should process via normal pipeline.
     """
     from app.services.pod_folder_service import save_pod_bytes
     from app.models.models import PodRegistry, EmailRequest as EmailRequestModel, SystemConfig
@@ -401,6 +406,7 @@ async def _handle_pod_reply(db: AsyncSession, em: dict):
                 em["from_email"], all_refs, len(em["pdf_attachments"]))
 
     resumed_request_ids = []
+    any_saved = False
 
     from app.services.pdf_conversion_service import convert_bytes_to_pdf
 
@@ -411,7 +417,7 @@ async def _handle_pod_reply(db: AsyncSession, em: dict):
         try:
             att_bytes, att_filename = await convert_bytes_to_pdf(att_bytes, att_filename)
         except Exception as conv_err:
-            logger.warning("POD reply: could not convert %s to PDF: %s — skipping", att_filename, conv_err)
+            logger.warning("POD reply: could not convert %s to PDF: %s - skipping", att_filename, conv_err)
             continue
 
         saved_filename = None
@@ -456,6 +462,7 @@ async def _handle_pod_reply(db: AsyncSession, em: dict):
                 customer_po=matched_reg.customer_po,
             )
             logger.info("Saved carrier POD %s for delivery %s", saved_filename, delivery)
+            any_saved = True
 
             # Find an awaiting_pod EmailRequest for this order
             if order_id:
@@ -468,23 +475,30 @@ async def _handle_pod_reply(db: AsyncSession, em: dict):
                 waiting_req = r2.scalar_one_or_none()
                 if waiting_req and str(waiting_req.id) not in resumed_request_ids:
                     resumed_request_ids.append(str(waiting_req.id))
-        else:
-            # No registry entry — save with a generic delivery key from subject
-            generic_ref = all_refs[0] if all_refs else f"UNKNOWN-{secrets.token_hex(3).upper()}"
+        elif all_refs:
+            # No registry entry but we extracted a reference — save with that ref
             saved_filename = await save_pod_bytes(
                 db=db,
                 file_bytes=att_bytes,
-                delivery_number=generic_ref,
+                delivery_number=all_refs[0],
                 original_filename=att_filename,
                 received_via="email",
                 matched_by="carrier_reply",
             )
-            logger.info("Saved carrier POD %s (no registry match)", saved_filename)
+            logger.info("Saved carrier POD %s with ref %s (no registry match)", saved_filename, all_refs[0])
+            any_saved = True
+        else:
+            # No registry match AND no extractable reference — skip to avoid
+            # phantom UNKNOWN entries. The email will be processed normally.
+            logger.info("Skipping PDF attachment %s — no delivery/order reference found", att_filename)
 
-    await db.commit()
+    if any_saved:
+        await db.commit()
 
     # Enqueue resume tasks for any waiting requests
     from app.core.tasks import resume_pod_task
     for req_id in resumed_request_ids:
         resume_pod_task.delay(req_id)
         logger.info("Enqueued resume_pod_task for request %s", req_id)
+
+    return any_saved
