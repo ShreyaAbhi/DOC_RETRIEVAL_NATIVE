@@ -18,7 +18,7 @@ async def summary_report(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    since = datetime.utcnow() - timedelta(days=days)
+    since = datetime.now() - timedelta(days=days)
 
     # Base filter applied to all email_requests queries
     def base_filter(stmt):

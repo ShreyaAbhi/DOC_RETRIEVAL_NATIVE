@@ -28,9 +28,9 @@ async def _check_service(url: str, timeout: float = 5.0) -> dict:
     import httpx
     try:
         async with httpx.AsyncClient(timeout=timeout) as c:
-            t0 = datetime.utcnow()
+            t0 = datetime.now()
             resp = await c.get(url)
-            latency_ms = (datetime.utcnow() - t0).total_seconds() * 1000
+            latency_ms = (datetime.now() - t0).total_seconds() * 1000
             return {"up": resp.status_code < 500, "status_code": resp.status_code,
                     "latency_ms": round(latency_ms, 1)}
     except Exception as e:
@@ -56,7 +56,7 @@ async def full_diagnostics(
 ):
     """Comprehensive system health report."""
 
-    now = datetime.utcnow()
+    now = datetime.now()
     report = {
         "generated_at": now.isoformat() + "Z",
         "version": _read_version(),

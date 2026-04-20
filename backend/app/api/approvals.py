@@ -78,7 +78,7 @@ async def action_approval(
 
     appr.status     = "approved" if body.action == "approve" else "rejected"
     appr.reviewed_by  = body.reviewer
-    appr.reviewed_at  = datetime.utcnow()
+    appr.reviewed_at  = datetime.now()
     appr.reviewer_notes = body.notes
 
     req = await db.get(EmailRequest, appr.request_id)
@@ -128,8 +128,8 @@ async def action_approval(
             )
 
             req.status = "completed"
-            req.response_sent_at = datetime.utcnow()
-            req.completed_at     = datetime.utcnow()
+            req.response_sent_at = datetime.now()
+            req.completed_at     = datetime.now()
             if send_result.get("message_id"):
                 req.smtp_message_id = send_result["message_id"]
             await log_audit(db, req.id, "approved",

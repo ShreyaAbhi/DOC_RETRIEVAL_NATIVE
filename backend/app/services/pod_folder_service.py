@@ -103,7 +103,7 @@ async def save_pod_file(
         entry.status = 'have_pod'
         entry.filename = dest_filename
         entry.pod_folder_path = dest_path
-        entry.received_at = datetime.now(timezone.utc)
+        entry.received_at = datetime.now()
         entry.received_via = received_via
         entry.matched_by = matched_by
         if carrier_id:
@@ -156,7 +156,7 @@ async def save_pod_bytes(
         entry.status = 'have_pod'
         entry.filename = dest_filename
         entry.pod_folder_path = dest_path
-        entry.received_at = datetime.now(timezone.utc)
+        entry.received_at = datetime.now()
         entry.received_via = received_via
         entry.matched_by = matched_by
         if carrier_id:
@@ -233,7 +233,7 @@ async def mark_pod_requested(
         db.add(entry)
 
     entry.status = 'requested'
-    entry.requested_at = datetime.now(timezone.utc)
+    entry.requested_at = datetime.now()
     if message_id:
         entry.request_email_message_id = message_id
     if carrier_id:
@@ -409,7 +409,7 @@ async def scan_pod_folder_for_order(
             reg.filename = pdf_f.name
             reg.pod_folder_path = str(pdf_f)
             reg.order_id = order.id
-            reg.received_at = datetime.now(timezone.utc)
+            reg.received_at = datetime.now()
             reg.received_via = 'manual'
             reg.matched_by = 'folder_scan'
             await db.flush()

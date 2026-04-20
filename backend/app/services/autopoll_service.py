@@ -61,13 +61,13 @@ async def check_and_run_autopoll(db: AsyncSession) -> Optional[dict]:
     if not cfg["enabled"]:
         return None
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now()
     last_run_str = cfg["last_run"]
     if last_run_str:
         try:
             last_run = datetime.fromisoformat(last_run_str)
-            if last_run.tzinfo is None:
-                last_run = last_run.replace(tzinfo=timezone.utc)
+            if last_run.tzinfo is not None:
+                last_run = last_run.replace(tzinfo=None)
             elapsed = now - last_run
             if elapsed < timedelta(minutes=cfg["frequency_minutes"]):
                 return None
@@ -313,7 +313,7 @@ async def _upsert_pod_registry(db: AsyncSession, delivery_number: str, order_id,
 
 
 async def _save_result(db: AsyncSession, result: dict) -> None:
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now().isoformat()
     # Store a copy without the order IDs list (too large for config value)
     summary = {k: v for k, v in result.items() if k != "new_order_ids"}
     for key, value in [
@@ -325,7 +325,7 @@ async def _save_result(db: AsyncSession, result: dict) -> None:
             cfg = SystemConfig(key=key)
             db.add(cfg)
         cfg.value = value
-        cfg.updated_at = datetime.utcnow()
+        cfg.updated_at = datetime.now()
     await db.commit()
 
 

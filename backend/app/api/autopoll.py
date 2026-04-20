@@ -45,7 +45,7 @@ async def update_autopoll_config(
             cfg = SystemConfig(key=key)
             db.add(cfg)
         cfg.value = value
-        cfg.updated_at = datetime.utcnow()
+        cfg.updated_at = datetime.now()
     await db.commit()
     return await get_autopoll_config(db)
 

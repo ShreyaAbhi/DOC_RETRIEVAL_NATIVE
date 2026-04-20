@@ -51,7 +51,7 @@ async def trigger_for_order(
     Returns a dict with keys 'packing_slip' and/or 'invoice' mapped to bool
     success flags (only present if the corresponding URL was configured).
     """
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now().isoformat()
     base_payload = {
         "order_id":              str(order.id),
         "customer_order_number": order.customer_order_number,

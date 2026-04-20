@@ -183,14 +183,14 @@ async def quick_invite(
     me = result.scalar_one_or_none()
     if me:
         me.setup_token      = secrets.token_urlsafe(32)
-        me.token_expires_at = datetime.utcnow() + timedelta(hours=INVITE_EXPIRY_HOURS)
+        me.token_expires_at = datetime.now() + timedelta(hours=INVITE_EXPIRY_HOURS)
         if me.status not in ('active',):
             me.status = 'pending'
     else:
         me = MonitoredEmail(
             email=normalized,
             setup_token=secrets.token_urlsafe(32),
-            token_expires_at=datetime.utcnow() + timedelta(hours=INVITE_EXPIRY_HOURS),
+            token_expires_at=datetime.now() + timedelta(hours=INVITE_EXPIRY_HOURS),
             created_by=admin.email,
         )
         db.add(me)
@@ -401,7 +401,7 @@ async def add_monitored_email(
         raise HTTPException(400, "This email address is already registered for monitoring.")
 
     token   = secrets.token_urlsafe(32)
-    expires = datetime.utcnow() + timedelta(hours=INVITE_EXPIRY_HOURS)
+    expires = datetime.now() + timedelta(hours=INVITE_EXPIRY_HOURS)
 
     me = MonitoredEmail(
         email=normalized,
@@ -445,7 +445,7 @@ async def resend_invite(
         raise HTTPException(404, "Not found")
 
     me.setup_token      = secrets.token_urlsafe(32)
-    me.token_expires_at = datetime.utcnow() + timedelta(hours=INVITE_EXPIRY_HOURS)
+    me.token_expires_at = datetime.now() + timedelta(hours=INVITE_EXPIRY_HOURS)
     if me.status not in ('active',):
         me.status = 'pending'
     await db.commit()
@@ -467,7 +467,7 @@ async def get_invite_link(
     if not me.setup_token:
         # Generate a fresh token if none exists
         me.setup_token      = secrets.token_urlsafe(32)
-        me.token_expires_at = datetime.utcnow() + timedelta(hours=INVITE_EXPIRY_HOURS)
+        me.token_expires_at = datetime.now() + timedelta(hours=INVITE_EXPIRY_HOURS)
         await db.commit()
         await db.refresh(me)
 
@@ -494,7 +494,7 @@ async def send_invite_email_now(
         raise HTTPException(404, "Not found")
     if not me.setup_token:
         me.setup_token      = secrets.token_urlsafe(32)
-        me.token_expires_at = datetime.utcnow() + timedelta(hours=INVITE_EXPIRY_HOURS)
+        me.token_expires_at = datetime.now() + timedelta(hours=INVITE_EXPIRY_HOURS)
         await db.commit()
         await db.refresh(me)
     bg.add_task(_send_invite_bg, str(me.id), me.setup_token)
@@ -602,7 +602,7 @@ async def complete_setup(token: str, body: SetupBody, db: AsyncSession = Depends
     me.use_ssl                = body.use_ssl
     me.mailbox_folder         = body.mailbox_folder
     me.check_interval_minutes = body.check_interval_minutes
-    me.configured_at          = datetime.utcnow()
+    me.configured_at          = datetime.now()
     me.status                 = 'active'
     # Invalidate token — single-use
     me.setup_token      = None
@@ -622,9 +622,7 @@ async def _resolve_token(token: str, db: AsyncSession) -> MonitoredEmail:
     if not me:
         raise HTTPException(404, "Invalid or expired setup link.")
     if me.token_expires_at:
-        # Compare as naive UTC – SQLite strips tzinfo on round-trip
-        expires = me.token_expires_at.replace(tzinfo=None)
-        if expires < datetime.utcnow():
+        if me.token_expires_at < datetime.now():
             raise HTTPException(410, "This setup link has expired. Please ask an admin to resend the invitation.")
     return me
 

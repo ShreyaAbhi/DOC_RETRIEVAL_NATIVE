@@ -78,7 +78,7 @@ async def start_oauth(
     me = result.scalar_one_or_none()
     if not me:
         raise HTTPException(404, "Invalid or expired setup link.")
-    if me.token_expires_at and me.token_expires_at.replace(tzinfo=None) < datetime.utcnow():
+    if me.token_expires_at and me.token_expires_at < datetime.now():
         raise HTTPException(410, "This setup link has expired. Please ask an admin to resend the invitation.")
 
     cfg = await _load_ms_cfg(db)
@@ -98,7 +98,7 @@ async def start_oauth(
 
     # Clean up stale states, then create a fresh one
     await db.execute(
-        OAuthPendingState.__table__.delete().where(OAuthPendingState.expires_at < datetime.utcnow())
+        OAuthPendingState.__table__.delete().where(OAuthPendingState.expires_at < datetime.now())
     )
     state = secrets.token_urlsafe(32)
     db.add(OAuthPendingState(
@@ -106,7 +106,7 @@ async def start_oauth(
         provider="microsoft",
         setup_token=setup_token,
         monitored_email_id=str(me.id),
-        expires_at=datetime.utcnow() + timedelta(minutes=STATE_TTL_MIN),
+        expires_at=datetime.now() + timedelta(minutes=STATE_TTL_MIN),
     ))
     await db.commit()
 
@@ -154,7 +154,7 @@ async def oauth_callback(
     pending = await db.get(OAuthPendingState, state)
     if not pending or pending.provider != "microsoft":
         return _redirect_to_frontend("error", "Invalid or unknown state parameter")
-    if pending.expires_at and pending.expires_at < datetime.utcnow():
+    if pending.expires_at and pending.expires_at < datetime.now():
         await db.delete(pending)
         await db.commit()
         return _redirect_to_frontend("error", "Authorization request expired, please try again")
@@ -214,7 +214,7 @@ async def oauth_callback(
     me.auth_type              = "oauth_microsoft"
     me.oauth_access_token     = encrypt_password(access_token)
     me.oauth_refresh_token    = encrypt_password(refresh_token) if refresh_token else me.oauth_refresh_token
-    me.oauth_token_expires_at = datetime.utcnow() + timedelta(seconds=max(60, expires_in - 60))
+    me.oauth_token_expires_at = datetime.now() + timedelta(seconds=max(60, expires_in - 60))
     me.oauth_scope            = granted_scope
     me.imap_host              = me.imap_host or "outlook.office365.com"
     me.imap_port              = me.imap_port or 993
@@ -222,7 +222,7 @@ async def oauth_callback(
     me.mailbox_folder         = me.mailbox_folder or "INBOX"
     me.check_interval_minutes = me.check_interval_minutes or 5
     me.imap_user              = me.imap_user or me.email
-    me.configured_at          = datetime.utcnow()
+    me.configured_at          = datetime.now()
     me.status                 = "active"
     me.last_error             = None
     me.last_reauth_reminder_at = None
@@ -306,7 +306,7 @@ async def refresh_microsoft_token(db: AsyncSession, me: MonitoredEmail) -> str |
     me.oauth_access_token     = encrypt_password(new_access)
     if new_refresh:
         me.oauth_refresh_token = encrypt_password(new_refresh)
-    me.oauth_token_expires_at = datetime.utcnow() + timedelta(seconds=max(60, expires_in - 60))
+    me.oauth_token_expires_at = datetime.now() + timedelta(seconds=max(60, expires_in - 60))
     me.last_error             = None
     if me.status == "reauth_required":
         me.status = "active"
@@ -322,7 +322,7 @@ async def get_valid_access_token(db: AsyncSession, me: MonitoredEmail) -> str | 
         return await refresh_microsoft_token(db, me)
 
     expires = me.oauth_token_expires_at
-    if expires and expires > datetime.utcnow() + timedelta(minutes=2):
+    if expires and expires > datetime.now() + timedelta(minutes=2):
         try:
             return decrypt_password(me.oauth_access_token)
         except Exception:

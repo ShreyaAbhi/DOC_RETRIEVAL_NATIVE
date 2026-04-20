@@ -174,7 +174,7 @@ async def upload_pod(
     reg.status = 'have_pod'
     reg.filename = saved_name
     reg.pod_folder_path = dest_path
-    reg.received_at = datetime.now(timezone.utc)
+    reg.received_at = datetime.now()
     reg.received_via = 'manual'
     reg.matched_by = 'manual'
     if order_id:

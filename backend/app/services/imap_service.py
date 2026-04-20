@@ -218,7 +218,7 @@ async def poll_monitored_email(db: AsyncSession, me: MonitoredEmail) -> int:
         from app.api.oauth_microsoft import get_valid_access_token
         oauth_access_token = await get_valid_access_token(db, me)
         if not oauth_access_token:
-            me.last_checked_at = datetime.now(timezone.utc)
+            me.last_checked_at = datetime.now()
             await db.commit()
             return 0
     else:
@@ -262,7 +262,7 @@ async def poll_monitored_email(db: AsyncSession, me: MonitoredEmail) -> int:
                 await asyncio.sleep(5)
 
     if emails is None:
-        me.last_checked_at = datetime.now(timezone.utc)
+        me.last_checked_at = datetime.now()
         me.last_error = str(last_exc)
         msg = str(last_exc).upper() if last_exc else ""
         if (me.auth_type or "password") == "oauth_microsoft" and (
@@ -277,7 +277,7 @@ async def poll_monitored_email(db: AsyncSession, me: MonitoredEmail) -> int:
         logger.error("IMAP poll failed for %s: %s", me.email, last_exc)
         return 0
 
-    me.last_checked_at = datetime.now(timezone.utc)
+    me.last_checked_at = datetime.now()
     me.last_error = None
     if me.status == "error":
         me.status = "active"

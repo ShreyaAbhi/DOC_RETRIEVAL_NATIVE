@@ -64,7 +64,7 @@ async def update_config(key: str, body: ConfigUpdate, db: AsyncSession = Depends
         cfg = SystemConfig(key=key)
         db.add(cfg)
     cfg.value = body.value
-    cfg.updated_at = datetime.utcnow()
+    cfg.updated_at = datetime.now()
     display_value = _MASK if key in MASKED_CONFIG_KEYS else body.value
     await log_audit(
         db, None, "system",
@@ -197,7 +197,7 @@ async def upload_logo(
         cfg = SystemConfig(key="app_logo", description="Custom logo filename")
         db.add(cfg)
     cfg.value = f"logo{ext}"
-    cfg.updated_at = datetime.utcnow()
+    cfg.updated_at = datetime.now()
     await db.commit()
 
     return {"filename": f"logo{ext}"}
@@ -212,6 +212,6 @@ async def delete_logo(db: AsyncSession = Depends(get_db), _: User = Depends(requ
     cfg = await db.get(SystemConfig, "app_logo")
     if cfg:
         cfg.value = ""
-        cfg.updated_at = datetime.utcnow()
+        cfg.updated_at = datetime.now()
         await db.commit()
     return {"status": "removed"}

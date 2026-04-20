@@ -62,7 +62,7 @@ async def websocket_live(websocket: WebSocket):
                 "pending_approvals": pending_approvals,
                 "pending_guidance": pending_guidance,
                 "recent_requests": recent,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now().isoformat(),
             }, default=str))
             await asyncio.sleep(5)
     except WebSocketDisconnect:

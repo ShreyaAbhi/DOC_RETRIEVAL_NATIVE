@@ -64,8 +64,8 @@ async def generate_pod_pdf(order_id: str, tracking: str, ups_data: dict) -> tupl
             [Paragraph("Proof of Delivery", h1),
              Paragraph("Official Delivery Confirmation Document", sub)],
             [Paragraph("Document ID", label),
-             Paragraph(f"POD-{datetime.utcnow().strftime('%Y')}-{tracking[-6:]}", value),
-             Paragraph(f"Generated: {datetime.utcnow().strftime('%d %b %Y %H:%M')} UTC", small)],
+             Paragraph(f"POD-{datetime.now().strftime('%Y')}-{tracking[-6:]}", value),
+             Paragraph(f"Generated: {datetime.now().strftime('%d %b %Y %H:%M')}", small)],
         ]]
         header_tbl = Table(header_data, colWidths=[30*mm, 100*mm, 55*mm])
         header_tbl.setStyle(TableStyle([
@@ -183,7 +183,7 @@ async def generate_pod_pdf(order_id: str, tracking: str, ups_data: dict) -> tupl
     except ImportError:
         file_name = f"POD_{order_id}_UPS_{tracking[-6:]}.pdf"
         file_path = str(DOCS_PATH / file_name)
-        Path(file_path).write_text(f"POD PLACEHOLDER — {order_id} — {tracking} — {datetime.utcnow()}")
+        Path(file_path).write_text(f"POD PLACEHOLDER — {order_id} — {tracking} — {datetime.now()}")
         return file_path, file_name
 
 
@@ -233,7 +233,7 @@ async def generate_packing_slip_pdf(
             [Paragraph("Delivery No.", label),
              Paragraph(f"<b>{delivery_number}</b>",
                        ParagraphStyle("dn", fontSize=14, textColor=colors.HexColor("#FFD700"), fontName="Helvetica-Bold")),
-             Paragraph(f"Generated: {datetime.utcnow().strftime('%d %b %Y')}", small)],
+             Paragraph(f"Generated: {datetime.now().strftime('%d %b %Y')}", small)],
         ]], colWidths=[110*mm, 75*mm])
         hdr.setStyle(TableStyle([
             ("BACKGROUND",(0,0),(-1,-1), BLUE),
@@ -344,7 +344,7 @@ async def generate_packing_slip_pdf(
     except ImportError:
         file_name = f"PL_{delivery_number}.pdf"
         file_path = str(PS_PATH / file_name)
-        Path(file_path).write_text(f"PACKING SLIP PLACEHOLDER — {delivery_number} — {datetime.utcnow()}")
+        Path(file_path).write_text(f"PACKING SLIP PLACEHOLDER — {delivery_number} — {datetime.now()}")
         return file_path, file_name
 
 
@@ -520,5 +520,5 @@ async def generate_invoice_pdf(
     except ImportError:
         file_name = f"{invoice_number}_{order_id}.pdf"
         file_path = str(INV_PATH / file_name)
-        Path(file_path).write_text(f"INVOICE PLACEHOLDER — {invoice_number} — {datetime.utcnow()}")
+        Path(file_path).write_text(f"INVOICE PLACEHOLDER — {invoice_number} — {datetime.now()}")
         return file_path, file_name

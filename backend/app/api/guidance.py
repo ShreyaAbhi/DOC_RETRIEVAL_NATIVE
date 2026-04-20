@@ -82,7 +82,7 @@ async def provide_guidance(
     g.status = "provided"
     g.human_guidance = body.guidance
     g.provided_by = body.provided_by
-    g.provided_at = datetime.utcnow()
+    g.provided_at = datetime.now()
 
     req = await db.get(EmailRequest, g.request_id)
     if req:
@@ -105,7 +105,7 @@ async def provide_guidance(
             await resume_after_guidance(db, str(req.id))
         else:
             req.status = "completed"
-            req.completed_at = datetime.utcnow()
+            req.completed_at = datetime.now()
 
     await db.commit()
     return {"status": "guidance_provided"}
@@ -133,7 +133,7 @@ async def retrigger_with_reference(
         f"PO={body.customer_po or '—'} | Delivery={body.delivery_number or '—'}"
     )
     g.provided_by = current_user.email
-    g.provided_at = datetime.utcnow()
+    g.provided_at = datetime.now()
 
     req = await db.get(EmailRequest, g.request_id)
     if req:

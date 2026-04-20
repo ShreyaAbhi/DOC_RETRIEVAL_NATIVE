@@ -321,7 +321,7 @@ def heartbeat_task():
                     logger.warning("heartbeat_task: no recipient configured")
                     return
 
-                now = datetime.utcnow()
+                now = datetime.now()
                 hostname = platform.node()
 
                 # ── Collect stats ─────────────────────────────
@@ -392,7 +392,7 @@ def heartbeat_task():
 
 Host:       {hostname}
 Version:    v{version}
-Timestamp:  {now.strftime('%Y-%m-%d %H:%M UTC')}
+Timestamp:  {now.strftime('%Y-%m-%d %H:%M')}
 OS:         {platform.system()} {platform.release()}
 
 SERVICES
@@ -448,7 +448,7 @@ def oauth_reauth_reminder_task():
         engine, SessionLocal = _make_session_factory()
         try:
             async with SessionLocal() as db:
-                now = datetime.utcnow()
+                now = datetime.now()
                 warn_before = now + timedelta(days=REAUTH_WARNING_DAYS)
 
                 row = await db.get(SystemConfig, "app_base_url")

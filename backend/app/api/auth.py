@@ -39,7 +39,7 @@ async def login(form: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = 
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account disabled")
 
-    user.last_login = datetime.utcnow()
+    user.last_login = datetime.now()
     await db.commit()
 
     token = create_access_token({"sub": str(user.id), "role": str(user.role), "email": user.email})
@@ -91,7 +91,7 @@ async def forgot_password(body: ForgotPasswordRequest, db: AsyncSession = Depend
 
         raw_token = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
-        expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+        expires_at = datetime.now() + timedelta(hours=1)
 
         db.add(PasswordResetToken(
             user_id=user.id,
@@ -144,7 +144,7 @@ async def reset_password(body: ResetPasswordRequest, db: AsyncSession = Depends(
         raise HTTPException(status_code=400, detail="Invalid or expired reset link")
     if reset_token.used:
         raise HTTPException(status_code=400, detail="This reset link has already been used")
-    if reset_token.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+    if reset_token.expires_at.replace(tzinfo=None) < datetime.now():
         raise HTTPException(status_code=400, detail="This reset link has expired")
 
     user = await db.get(User, reset_token.user_id)

@@ -30,7 +30,7 @@ CONFIDENCE_THRESHOLD = settings.CONFIDENCE_THRESHOLD
 
 # ── Reference number generator ────────────────────────────────
 def make_ref() -> str:
-    ts = datetime.utcnow().strftime("%Y%m%d")
+    ts = datetime.now().strftime("%Y%m%d")
     uid = str(uuid.uuid4())[:6].upper()
     return f"POD-{ts}-{uid}"
 
@@ -324,8 +324,8 @@ async def _notify_already_responded(db: AsyncSession, req: EmailRequest, origina
                      attachments=attachments or None)
     await _update_status(db, req, "completed")
     req.response_subject = subject
-    req.response_sent_at = datetime.utcnow()
-    req.completed_at = datetime.utcnow()
+    req.response_sent_at = datetime.now()
+    req.completed_at = datetime.now()
     await log_audit(db, req.id, "system",
                     f"Reply to already-responded thread — notified {smtp_from}",
                     {"original_request_id": str(original.id),
@@ -1220,7 +1220,7 @@ async def _sync_registry_from_pod(db: AsyncSession, pod: PodDocument, order: Opt
         reg.status = "have_pod"
         reg.filename = pod.file_name
         reg.pod_folder_path = str(Path(pod.file_path).parent)
-        reg.received_at = datetime.utcnow()
+        reg.received_at = datetime.now()
         if not reg.customer_po and order.customer_order_number:
             reg.customer_po = order.customer_order_number
         await db.flush()
@@ -1652,8 +1652,8 @@ async def _auto_send_response(db: AsyncSession, req: EmailRequest,
     )
 
     req.status = "completed"
-    req.response_sent_at = datetime.utcnow()
-    req.completed_at     = datetime.utcnow()
+    req.response_sent_at = datetime.now()
+    req.completed_at     = datetime.now()
     if send_result.get("message_id"):
         req.smtp_message_id = send_result["message_id"]
 

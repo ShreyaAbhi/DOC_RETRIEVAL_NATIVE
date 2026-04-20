@@ -130,7 +130,7 @@ async def _imap_poll_loop():
                     )
                 )
                 entries = result.scalars().all()
-                now = datetime.now(timezone.utc)
+                now = datetime.now()
                 for me in entries:
                     if not me.imap_host or (not me.imap_password and (me.auth_type or 'password') == 'password'):
                         continue

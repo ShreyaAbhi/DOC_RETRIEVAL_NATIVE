@@ -371,7 +371,7 @@ async def delete_registry_entry(
         raise HTTPException(404, "Registry entry not found")
     dn = entry.delivery_number
     entry.is_deleted = True
-    entry.deleted_at = datetime.now(timezone.utc)
+    entry.deleted_at = datetime.now()
     await log_audit(
         db, None, "system",
         f"Registry entry soft-deleted for delivery {dn} by {current_user.email}",
