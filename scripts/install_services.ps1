@@ -141,10 +141,11 @@ function Install-Service {
     & $nssm set $Name AppRotateFiles 1 2>&1 | Out-Null
     & $nssm set $Name AppRotateBytes 5242880 2>&1 | Out-Null
 
-    # Environment variables
+    # Environment variables — pass each as a separate argument to NSSM
     if ($Env.Count -gt 0) {
-        $envString = ($Env.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join "`n"
-        & $nssm set $Name AppEnvironmentExtra $envString 2>&1 | Out-Null
+        $envArgs = @($Name, "AppEnvironmentExtra")
+        $Env.GetEnumerator() | ForEach-Object { $envArgs += "$($_.Key)=$($_.Value)" }
+        & $nssm set @envArgs 2>&1 | Out-Null
     }
 
     Write-Host " - OK" -ForegroundColor Green
@@ -157,6 +158,14 @@ Write-Host ""
 
 # 1. Ollama - stop any user-mode instance and install as a proper service
 $ollamaInstalled = $false
+
+# Stop any existing DRS-Ollama service first to free port 11434
+$existingOllamaSvc = Get-Service -Name "$serviceName-Ollama" -ErrorAction SilentlyContinue
+if ($existingOllamaSvc) {
+    Write-Host "  Stopping existing DRS-Ollama service..." -ForegroundColor Yellow
+    & $nssm stop "$serviceName-Ollama" 2>&1 | Out-Null
+    Start-Sleep -Seconds 3
+}
 
 # Stop Ollama tray app / user processes so we can run it as a service
 $ollamaProc = Get-Process -Name "ollama*" -ErrorAction SilentlyContinue
@@ -177,23 +186,50 @@ if ($ollamaProc) {
     }
 }
 
+# Wait for port 11434 to be free
+$portCheck = Get-NetTCPConnection -LocalPort 11434 -ErrorAction SilentlyContinue
+if ($portCheck) {
+    Write-Host "  Waiting for port 11434 to be released..." -ForegroundColor Yellow
+    $waited = 0
+    while ($waited -lt 15) {
+        Start-Sleep -Seconds 2
+        $waited += 2
+        $portCheck = Get-NetTCPConnection -LocalPort 11434 -ErrorAction SilentlyContinue
+        if (-not $portCheck) { break }
+    }
+    if ($portCheck) {
+        Write-Host "  WARNING: Port 11434 still in use. Ollama service may fail to start." -ForegroundColor Red
+    }
+}
+
 if ($ollamaExe) {
-    # Find existing Ollama models directory (user profile or default)
-    $ollamaModelsDir = $null
+    # Copy Ollama models to a system-accessible location (SYSTEM account cannot access user profile)
+    $systemModelsDir = "C:\ProgramData\Ollama\models"
+    $userModelsDir = $null
     $modelsCandidates = @(
         "$env:USERPROFILE\.ollama\models",
         "$env:LOCALAPPDATA\Ollama\models",
         "C:\Users\$env:USERNAME\.ollama\models"
     )
     foreach ($mc in $modelsCandidates) {
-        if (Test-Path $mc) { $ollamaModelsDir = $mc; break }
+        if (Test-Path $mc) { $userModelsDir = $mc; break }
     }
 
-    $ollamaEnv = @{ "OLLAMA_HOST" = "0.0.0.0:11434" }
-    if ($ollamaModelsDir) {
-        $ollamaEnv["OLLAMA_MODELS"] = $ollamaModelsDir
-        Write-Host "  Using Ollama models from: $ollamaModelsDir" -ForegroundColor DarkGray
+    if ($userModelsDir -and -not (Test-Path "$systemModelsDir\manifests")) {
+        Write-Host "  Copying Ollama models to system location..." -ForegroundColor Yellow
+        Write-Host "    From: $userModelsDir" -ForegroundColor DarkGray
+        Write-Host "    To:   $systemModelsDir" -ForegroundColor DarkGray
+        New-Item -ItemType Directory -Path $systemModelsDir -Force | Out-Null
+        Copy-Item -Path "$userModelsDir\*" -Destination $systemModelsDir -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "  Models copied." -ForegroundColor Green
+    } elseif (Test-Path "$systemModelsDir\manifests") {
+        Write-Host "  Using existing system Ollama models: $systemModelsDir" -ForegroundColor DarkGray
+    } elseif ($userModelsDir) {
+        Write-Host "  Using user Ollama models: $userModelsDir" -ForegroundColor DarkGray
+        $systemModelsDir = $userModelsDir
     }
+
+    $ollamaEnv = @{ "OLLAMA_HOST" = "0.0.0.0:11434"; "OLLAMA_MODELS" = $systemModelsDir }
 
     Install-Service `
         -Name "$serviceName-Ollama" `
