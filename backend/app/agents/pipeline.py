@@ -462,6 +462,28 @@ def _strip_sign_off(text: str) -> str:
     return _SIGN_OFF_RE.sub('', text).rstrip()
 
 
+def _strip_markdown(text: str) -> str:
+    """Normalise LLM output to plain text so all providers produce the same
+    email style (matching the Ollama/qwen format).
+
+    Strips bold/italic markers, heading prefixes, and converts markdown
+    bullet lists to clean dashes.
+    """
+    # Remove bold / italic markers: **text** → text, __text__ → text, *text* → text
+    out = re.sub(r'\*{2,3}(.+?)\*{2,3}', r'\1', text)
+    out = re.sub(r'_{2,3}(.+?)_{2,3}', r'\1', out)
+    # Single asterisk/underscore italic (only match mid-word boundaries)
+    out = re.sub(r'(?<!\w)\*(.+?)\*(?!\w)', r'\1', out)
+    out = re.sub(r'(?<!\w)_(.+?)_(?!\w)', r'\1', out)
+    # Heading prefixes: ## Heading → Heading
+    out = re.sub(r'^#{1,6}\s+', '', out, flags=re.M)
+    # Markdown bullet lists: "* item" or "+ item" → "- item"
+    out = re.sub(r'^[\*\+]\s+', '- ', out, flags=re.M)
+    # Numbered list with period: "1. item" → "- item" (keep consistent)
+    out = re.sub(r'^\d+\.\s+', '- ', out, flags=re.M)
+    return out
+
+
 # ── Prompt injection defence helpers ──────────────────────────
 _INJECTION_RE = re.compile(
     r'\b(ignore|disregard|forget|override|bypass)\b.{0,40}\b(previous|prior|above|all|any)\b.{0,40}\b(instruction|prompt|rule|context|system|directive)\b'
@@ -1385,13 +1407,16 @@ async def _compose_response(db: AsyncSession, req: EmailRequest,
     _DEFAULT_RESP_SYSTEM = (
         "You are a professional logistics customer service agent. Write clear, concise emails. "
         "Never include a sign-off, closing line, signature, or placeholder text like [Your Name] "
-        "or [Company Name] — the signature is handled separately by the system."
+        "or [Company Name] — the signature is handled separately by the system. "
+        "IMPORTANT: Write in plain text only. Do NOT use markdown formatting — no bold (**), "
+        "no italics (*), no headings (#), no bullet points (- or *). Use normal paragraphs."
     )
     _DEFAULT_RESP_INSTRUCTIONS = (
         "- Clearly state which documents are attached\n"
         "- If any documents are missing, mention them explicitly and apologise\n"
         "- 2 to 3 short paragraphs. No subject line. Professional and friendly tone.\n"
-        "- Do NOT add any closing, sign-off, or signature — these will be appended automatically by the system."
+        "- Do NOT add any closing, sign-off, or signature — these will be appended automatically by the system.\n"
+        "- Write in plain text only — no markdown, no bold, no bullet points, no numbered lists."
     )
     cfg_resp_sys   = await db.get(SystemConfig, "llm_response_system_prompt")
     cfg_resp_instr = await db.get(SystemConfig, "llm_response_instructions")
@@ -1431,7 +1456,7 @@ Instructions:
                             {"original_provider": orig, "error": err}, success=False)
         # Restore real customer name if it was replaced for anonymization
         llm_body = llm_body.replace("[CUSTOMER]", _compose_customer)
-        body = _strip_sign_off(llm_body)
+        body = _strip_markdown(_strip_sign_off(llm_body))
     except Exception:
         doc_list = attached_list
         body = (f"Dear {req.from_name or 'Customer'},\n\n"
@@ -1502,11 +1527,13 @@ async def _compose_response_multi(db: AsyncSession, req: EmailRequest,
     has_missing = bool(missing_orders)
     customer    = req.from_name or req.from_email.split("@")[0]
 
-    # Ask Ollama for the intro paragraph only — no table, no sign-off
+    # Ask LLM for the intro paragraph only — no table, no sign-off
     _DEFAULT_RESP_SYSTEM_MULTI = (
         "You are a professional logistics customer service agent. Write clear, concise emails. "
         "Never include a sign-off, closing line, signature, or placeholder text like [Your Name] "
-        "or [Company Name] — the signature is handled separately by the system."
+        "or [Company Name] — the signature is handled separately by the system. "
+        "IMPORTANT: Write in plain text only. Do NOT use markdown formatting — no bold (**), "
+        "no italics (*), no headings (#), no bullet points (- or *). Use normal paragraphs."
     )
     cfg_resp_sys_m = await db.get(SystemConfig, "llm_response_system_prompt")
     system = (cfg_resp_sys_m.value.strip() if cfg_resp_sys_m and cfg_resp_sys_m.value.strip()
@@ -1518,7 +1545,8 @@ Customer name: {customer}
 
 Instructions:
 - 1–2 short paragraphs only — no greeting line, no table, no attachment list, no sign-off
-- Start directly with the body text (e.g. "Please find below a summary of...")"""
+- Start directly with the body text (e.g. "Please find below a summary of...")
+- Write in plain text only — no markdown, no bold, no bullet points."""
 
     _multi_pii_map = {customer: "[CUSTOMER]"} if customer else {}
 
@@ -1533,7 +1561,7 @@ Instructions:
                             {"original_provider": orig, "error": err}, success=False)
         # Restore real customer name if it was replaced for anonymization
         llm_intro = llm_intro.replace("[CUSTOMER]", customer)
-        intro = _strip_sign_off(llm_intro)
+        intro = _strip_markdown(_strip_sign_off(llm_intro))
     except Exception:
         intro = "Please find below a summary of the shipping document status for your orders."
         if has_missing:
