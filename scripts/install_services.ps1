@@ -152,9 +152,15 @@ Write-Host ""
 Write-Host "  Installing services..." -ForegroundColor Cyan
 Write-Host ""
 
-# 1. Ollama
+# 1. Ollama - check if already running before installing as a service
 $ollamaInstalled = $false
-if ($ollamaExe) {
+$ollamaAlreadyRunning = $false
+$ollamaProc = Get-Process -Name "ollama" -ErrorAction SilentlyContinue
+if ($ollamaProc) {
+    $ollamaAlreadyRunning = $true
+    Write-Host "  Ollama is already running (user process, PID $($ollamaProc.Id))" -ForegroundColor Green
+    Write-Host "    Skipping DRS-Ollama service - not needed while Ollama runs via system tray." -ForegroundColor DarkGray
+} elseif ($ollamaExe) {
     Install-Service `
         -Name "$serviceName-Ollama" `
         -DisplayName "DRS - Ollama (AI Engine)" `
@@ -206,6 +212,9 @@ Install-Service `
 Write-Host ""
 Write-Host "  Starting services..." -ForegroundColor Cyan
 
+if ($ollamaAlreadyRunning) {
+    Write-Host "  Ollama - Running (user process)" -ForegroundColor Green
+}
 $services = @("$serviceName-Backend", "$serviceName-Worker", "$serviceName-Beat")
 if ($ollamaInstalled) { $services = @("$serviceName-Ollama") + $services }
 foreach ($svc in $services) {
