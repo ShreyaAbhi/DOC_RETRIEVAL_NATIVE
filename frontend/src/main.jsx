@@ -3705,16 +3705,12 @@ function SettingsPage() {
                 <div>
                   <div className={cn('text-sm font-medium', dark ? 'text-slate-200' : 'text-gray-800')}>Version</div>
                   <div className="font-mono text-xs mt-0.5 text-cyan-400">app_version</div>
-                  <div className={cn('text-xs mt-1', dark ? 'text-slate-500' : 'text-gray-500')}>Shown below the display name in the sidebar.</div>
+                  <div className={cn('text-xs mt-1', dark ? 'text-slate-500' : 'text-gray-500')}>Auto-synced from the installed patch. Shown below the display name in the sidebar.</div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Input value={appVersionInput} onChange={setAppVersionInput} placeholder="1.0.0" className="w-56" />
-                  <Btn variant="primary" size="sm" onClick={async () => {
-                    await API.put('/config/app_version', { value: appVersionInput.trim() || '1.0.0' })
-                    toast.success('Version updated')
-                    qcl.invalidateQueries(['branding'])
-                    qcl.invalidateQueries(['config'])
-                  }}><Check size={12}/> Save</Btn>
+                  <div className={cn('px-3 py-1.5 rounded text-sm font-mono', dark ? 'bg-[#0a1628] text-slate-300 border border-[#1a2540]' : 'bg-gray-100 text-gray-700 border border-gray-200')}>
+                    v{appVersionInput || '1.0.0'}
+                  </div>
                 </div>
               </div>
             </div>

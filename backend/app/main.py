@@ -9,6 +9,7 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
+from sqlalchemy import text
 from app.db.session import engine
 from app.core.config import settings
 from app.api import (requests, orders, materials, audit, approvals, guidance,
@@ -475,9 +476,30 @@ async def _run_migrations():
         })
 
 
+async def _sync_version_from_file():
+    """Read the VERSION file and write it into the app_version config key
+    so the sidebar always reflects the installed patch level."""
+    version = None
+    for rel in ("../VERSION", "VERSION", "../../VERSION"):
+        p = Path(rel).resolve()
+        if p.is_file():
+            version = p.read_text().strip()
+            break
+    if not version:
+        return
+    async with engine.begin() as conn:
+        await conn.execute(text("""
+            INSERT INTO system_config (key, value, description)
+            VALUES ('app_version', :ver, 'Application version displayed in the sidebar')
+            ON CONFLICT (key) DO UPDATE SET value = :ver
+        """), {"ver": version})
+    logger.info("Synced app_version from VERSION file → %s", version)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await _run_migrations()
+    await _sync_version_from_file()
     imap_task     = asyncio.create_task(_imap_poll_loop())
     autopoll_task = asyncio.create_task(_autopoll_loop())
     yield
