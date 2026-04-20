@@ -175,13 +175,30 @@ if ($ollamaProc) {
 }
 
 if ($ollamaExe) {
+    # Find existing Ollama models directory (user profile or default)
+    $ollamaModelsDir = $null
+    $modelsCandidates = @(
+        "$env:USERPROFILE\.ollama\models",
+        "$env:LOCALAPPDATA\Ollama\models",
+        "C:\Users\$env:USERNAME\.ollama\models"
+    )
+    foreach ($mc in $modelsCandidates) {
+        if (Test-Path $mc) { $ollamaModelsDir = $mc; break }
+    }
+
+    $ollamaEnv = @{ "OLLAMA_HOST" = "0.0.0.0:11434" }
+    if ($ollamaModelsDir) {
+        $ollamaEnv["OLLAMA_MODELS"] = $ollamaModelsDir
+        Write-Host "  Using Ollama models from: $ollamaModelsDir" -ForegroundColor DarkGray
+    }
+
     Install-Service `
         -Name "$serviceName-Ollama" `
         -DisplayName "DRS - Ollama (AI Engine)" `
         -Exe $ollamaExe `
         -Arguments "serve" `
         -WorkingDir $root `
-        -Env @{ "OLLAMA_HOST" = "0.0.0.0:11434" }
+        -Env $ollamaEnv
     $ollamaInstalled = $true
 
     # Disable Ollama tray app auto-start to prevent conflicts with the service
