@@ -162,7 +162,7 @@ function Install-Service {
     & $nssm set $Name AppRotateFiles 1 2>&1 | Out-Null
     & $nssm set $Name AppRotateBytes 5242880 2>&1 | Out-Null
 
-    # Environment variables — pass each as a separate argument to NSSM
+    # Environment variables - pass each as a separate argument to NSSM
     if ($Env.Count -gt 0) {
         $envArgs = @($Name, "AppEnvironmentExtra")
         $Env.GetEnumerator() | ForEach-Object { $envArgs += "$($_.Key)=$($_.Value)" }
@@ -461,7 +461,7 @@ if ($ollamaInstalled) {
             }
         }
     } else {
-        Write-Host "  WARNING: Ollama API not responding on port 11434 — cannot verify model" -ForegroundColor Red
+        Write-Host "  WARNING: Ollama API not responding on port 11434 - cannot verify model" -ForegroundColor Red
         Write-Host "    Check DRS-Ollama service status and logs\DRS_Ollama_stderr.log" -ForegroundColor Yellow
     }
     Write-Host ""
