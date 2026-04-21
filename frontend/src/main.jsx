@@ -4984,14 +4984,14 @@ function MonitoredEmailsPage() {
       <SectionHeader title="Email Monitors" subtitle="Mailboxes monitored for inbound POD requests" />
 
       {/* Reauth alert banner */}
-      {emails?.filter(e => e.status === 'reauth_required').length > 0 && (
+      {items?.filter(e => e.status === 'reauth_required').length > 0 && (
         <div className={cn('flex items-center gap-3 p-4 mb-4 rounded-lg border',
           dark ? 'bg-orange-500/10 border-orange-500/30 text-orange-300' : 'bg-orange-50 border-orange-200 text-orange-800')}>
           <AlertCircle size={18} className="flex-shrink-0"/>
           <div className="flex-1">
             <div className="font-medium text-sm">Authentication expired</div>
             <div className="text-xs mt-0.5 opacity-80">
-              {emails.filter(e => e.status === 'reauth_required').map(e => e.email).join(', ')} — email polling has stopped for {emails.filter(e => e.status === 'reauth_required').length === 1 ? 'this mailbox' : 'these mailboxes'}. The mailbox owner needs to re-authorize via the invite link, or use "Refresh Token" below.
+              {items.filter(e => e.status === 'reauth_required').map(e => e.email).join(', ')} — email polling has stopped for {items.filter(e => e.status === 'reauth_required').length === 1 ? 'this mailbox' : 'these mailboxes'}. The mailbox owner needs to re-authorize via the invite link, or use "Refresh Token" below.
             </div>
           </div>
         </div>
