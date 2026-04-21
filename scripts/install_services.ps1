@@ -19,6 +19,46 @@ Write-Host ""
 Write-Host "  Install path: $root" -ForegroundColor DarkGray
 Write-Host ""
 
+# ── Service Account Configuration ─────────────────────────────
+# By default, services run as LocalSystem. If your documents are on a
+# network share (UNC path), the services need a domain account with access.
+$serviceAccount = $null
+$servicePassword = $null
+
+# Check if a service account is configured in .env
+$envFile_early = "$root\.env"
+if (Test-Path $envFile_early) {
+    Get-Content $envFile_early | ForEach-Object {
+        if ($_ -match '^SERVICE_ACCOUNT=(.+)') { $serviceAccount = $Matches[1].Trim() }
+        if ($_ -match '^SERVICE_PASSWORD=(.+)') { $servicePassword = $Matches[1].Trim() }
+    }
+}
+
+if (-not $serviceAccount) {
+    Write-Host "  ---- Service Account Setup ----" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  If your documents (POD, Packing Slips, Invoices) are on a" -ForegroundColor White
+    Write-Host "  network share, the services need a domain account with access." -ForegroundColor White
+    Write-Host ""
+    Write-Host "  Enter domain\username (e.g. INGENUS\svc_drs) or press Enter" -ForegroundColor White
+    Write-Host "  to use LocalSystem (no network share access):" -ForegroundColor White
+    Write-Host ""
+    $inputAccount = Read-Host "  Service account"
+    if ($inputAccount.Trim()) {
+        $serviceAccount = $inputAccount.Trim()
+        $securePass = Read-Host "  Password" -AsSecureString
+        $servicePassword = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
+            [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePass)
+        )
+        Write-Host ""
+        Write-Host "  Services will run as: $serviceAccount" -ForegroundColor Green
+    } else {
+        Write-Host ""
+        Write-Host "  Using LocalSystem account (default)" -ForegroundColor DarkGray
+    }
+    Write-Host ""
+}
+
 # ── Step 0: Stop all existing DRS services before making changes ──
 $existingServices = Get-Service -Name "DRS-*" -ErrorAction SilentlyContinue
 if ($existingServices) {
@@ -167,6 +207,11 @@ function Install-Service {
         $envArgs = @($Name, "AppEnvironmentExtra")
         $Env.GetEnumerator() | ForEach-Object { $envArgs += "$($_.Key)=$($_.Value)" }
         & $nssm set @envArgs 2>&1 | Out-Null
+    }
+
+    # Service account - run as domain user instead of LocalSystem
+    if ($serviceAccount -and $servicePassword) {
+        & $nssm set $Name ObjectName $serviceAccount $servicePassword 2>&1 | Out-Null
     }
 
     Write-Host " - OK" -ForegroundColor Green

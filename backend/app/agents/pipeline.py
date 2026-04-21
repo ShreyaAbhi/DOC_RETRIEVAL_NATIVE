@@ -877,7 +877,9 @@ async def _find_packing_slip_in_db(db: AsyncSession,
     if existing:
         return existing
 
-    folder = Path(settings.PACKING_SLIPS_PATH).resolve()
+    # Read configurable path from SystemConfig, fall back to settings
+    slip_cfg = await db.get(SystemConfig, "packing_slip_folder_path")
+    folder = Path((slip_cfg.value if slip_cfg and slip_cfg.value else None) or settings.PACKING_SLIPS_PATH).resolve()
     if not folder.exists():
         return None
 
@@ -942,7 +944,9 @@ async def _find_invoice_in_db(db: AsyncSession,
     if existing:
         return existing
 
-    folder = Path(settings.INVOICES_PATH).resolve()
+    # Read configurable path from SystemConfig, fall back to settings
+    inv_cfg = await db.get(SystemConfig, "invoice_folder_path")
+    folder = Path((inv_cfg.value if inv_cfg and inv_cfg.value else None) or settings.INVOICES_PATH).resolve()
     if not folder.exists():
         return None
 
