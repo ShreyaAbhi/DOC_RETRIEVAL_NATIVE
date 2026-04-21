@@ -1645,7 +1645,9 @@ async def _load_auto_send_settings(db: AsyncSession) -> dict:
 
 
 def _qualifies_for_auto_send(req: EmailRequest, pod, ps, inv, cfg: dict) -> bool:
-    """Check auto-send eligibility against the current system_config settings."""
+    """Check auto-send eligibility against the current system_config settings.
+    Verifies both that document records exist AND that the files exist on disk."""
+    import os
     if not cfg['enabled']:
         return False
     confidence = float(req.confidence_score or 0)
@@ -1657,12 +1659,19 @@ def _qualifies_for_auto_send(req: EmailRequest, pod, ps, inv, cfg: dict) -> bool
         return False
     if cfg['require_invoice'] and not inv:
         return False
+    # Verify required files actually exist on disk — don't auto-send with missing attachments
+    for doc, required in [(pod, cfg['require_pod']), (ps, cfg['require_packing_slip']), (inv, cfg['require_invoice'])]:
+        if required and doc and hasattr(doc, 'file_path') and doc.file_path:
+            if not os.path.exists(doc.file_path):
+                return False
     return True
 
 
 async def _auto_send_response(db: AsyncSession, req: EmailRequest,
-                               attachment_paths: list[str]) -> None:
-    """Send the response email immediately, bypassing the approval queue."""
+                               attachment_paths: list[str]) -> bool | None:
+    """Send the response email immediately, bypassing the approval queue.
+    Returns True on success, None if aborted (missing attachments — caller
+    should fall through to the approval queue)."""
     from app.services.email_service import send_email
     import os
 
@@ -1695,6 +1704,10 @@ async def _auto_send_response(db: AsyncSession, req: EmailRequest,
             _log.warning("Auto-send: attachment not found: %s", p)
     if not valid_paths and attachment_paths:
         _log.warning("Auto-send: none of the attachment paths exist: %s", attachment_paths)
+        # Don't send an email with zero attachments when we expected some —
+        # redirect to approval queue so a human can review
+        _log.warning("Auto-send aborted — redirecting to approval queue (missing files)")
+        return None  # caller will check and fall through to approval
 
     send_result = await send_email(
         db,
@@ -1729,6 +1742,7 @@ async def _auto_send_response(db: AsyncSession, req: EmailRequest,
         success=sent_ok,
         error_detail=send_result.get("error"),
     )
+    return True
 
 
 # ── Step 5a: Request approval (single-order) ──────────────────
@@ -1750,8 +1764,9 @@ async def _request_approval(db: AsyncSession, req: EmailRequest,
 
     cfg = await _load_auto_send_settings(db)
     if _qualifies_for_auto_send(req, pod, ps, inv, cfg):
-        await _auto_send_response(db, req, attachment_paths)
-        return
+        result = await _auto_send_response(db, req, attachment_paths)
+        if result is not None:  # None means aborted (missing files)
+            return
 
     await _update_status(db, req, "awaiting_approval")
     approval = ApprovalQueue(
@@ -1788,8 +1803,9 @@ async def _request_approval_multi(db: AsyncSession, req: EmailRequest, results: 
         for _, _, pod, ps, inv in results
     )
     if all_qualify:
-        await _auto_send_response(db, req, attachment_paths)
-        return
+        result = await _auto_send_response(db, req, attachment_paths)
+        if result is not None:  # None means aborted (missing files)
+            return
 
     await _update_status(db, req, "awaiting_approval")
 
