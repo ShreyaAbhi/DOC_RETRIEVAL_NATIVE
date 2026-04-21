@@ -406,6 +406,67 @@ foreach ($svc in $services) {
     }
 }
 
+# ── Verify Ollama model is available ─────────────────────────
+if ($ollamaInstalled) {
+    Write-Host ""
+    Write-Host "  Verifying Ollama model availability..." -ForegroundColor Cyan
+
+    # Read configured model from .env or default
+    $ollamaModel = "qwen2.5:3b"
+    if (Test-Path $envFile) {
+        Get-Content $envFile | ForEach-Object {
+            if ($_ -match '^OLLAMA_MODEL=(.+)') { $ollamaModel = $Matches[1].Trim() }
+        }
+    }
+
+    # Wait for Ollama API to be ready (up to 30s)
+    $ollamaReady = $false
+    for ($i = 0; $i -lt 15; $i++) {
+        try {
+            $tagResp = Invoke-RestMethod -Uri "http://localhost:11434/api/tags" -TimeoutSec 5 -ErrorAction Stop
+            $ollamaReady = $true
+            break
+        } catch {
+            Start-Sleep -Seconds 2
+        }
+    }
+
+    if ($ollamaReady) {
+        # Check if our model is in the list
+        $modelNames = @()
+        if ($tagResp.models) {
+            $modelNames = $tagResp.models | ForEach-Object { $_.name }
+        }
+        $modelFound = $modelNames | Where-Object { $_ -eq $ollamaModel -or $_ -eq "${ollamaModel}:latest" -or $_ -like "${ollamaModel}*" }
+
+        if ($modelFound) {
+            Write-Host "  Model '$ollamaModel' is available" -ForegroundColor Green
+        } else {
+            Write-Host "  WARNING: Model '$ollamaModel' NOT found in Ollama!" -ForegroundColor Red
+            if ($modelNames.Count -gt 0) {
+                Write-Host "    Available models: $($modelNames -join ', ')" -ForegroundColor DarkGray
+            } else {
+                Write-Host "    No models found at all." -ForegroundColor DarkGray
+            }
+            Write-Host "    Attempting to pull '$ollamaModel'..." -ForegroundColor Yellow
+            try {
+                # Use Ollama API to pull the model
+                $pullBody = @{ name = $ollamaModel; stream = $false } | ConvertTo-Json
+                $pullResp = Invoke-RestMethod -Uri "http://localhost:11434/api/pull" -Method Post -Body $pullBody -ContentType "application/json" -TimeoutSec 600 -ErrorAction Stop
+                Write-Host "  Model '$ollamaModel' pulled successfully" -ForegroundColor Green
+            } catch {
+                Write-Host "  ERROR: Could not pull model '$ollamaModel': $_" -ForegroundColor Red
+                Write-Host "    The system will fall back to external LLM providers until the model is available." -ForegroundColor Yellow
+                Write-Host "    To fix manually, run: ollama pull $ollamaModel" -ForegroundColor Yellow
+            }
+        }
+    } else {
+        Write-Host "  WARNING: Ollama API not responding on port 11434 — cannot verify model" -ForegroundColor Red
+        Write-Host "    Check DRS-Ollama service status and logs\DRS_Ollama_stderr.log" -ForegroundColor Yellow
+    }
+    Write-Host ""
+}
+
 if (-not $allRunning) {
     Write-Host ""
     Write-Host "  ==========================================" -ForegroundColor Red
