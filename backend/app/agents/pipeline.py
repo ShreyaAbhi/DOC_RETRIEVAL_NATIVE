@@ -1493,7 +1493,8 @@ async def _compose_response(db: AsyncSession, req: EmailRequest,
         "- Do NOT add any closing, sign-off, or signature — these will be appended automatically by the system.\n"
         "- Write in plain text only — no markdown, no bold, no bullet points, no numbered lists.\n"
         "- NEVER include a 'Subject:' line — the subject is handled separately by the system.\n"
-        "- Start directly with the greeting (e.g. 'Dear ...,') — no headers or metadata before it."
+        "- Start directly with the greeting (e.g. 'Dear ...,') — no headers or metadata before it.\n"
+        "- Address the reply to the person who SIGNED the original email (look for the name in the sign-off/signature). Only fall back to the sender display name if no signature name is found."
     )
     cfg_resp_sys   = await db.get(SystemConfig, "llm_response_system_prompt")
     cfg_resp_instr = await db.get(SystemConfig, "llm_response_instructions")
@@ -1523,8 +1524,7 @@ Original customer email (for name reference):
 {_body_for_context}
 
 Instructions:
-{instructions}
-- IMPORTANT: Address the reply to the person who SIGNED the original email (look for the name in the sign-off/signature). Only fall back to the sender display name if no signature name is found."""
+{instructions}"""
 
     _compose_customer = req.from_name or req.from_email.split('@')[0]
     _compose_pii_map = {_compose_customer: "[CUSTOMER]"} if _compose_customer else {}
@@ -1632,7 +1632,7 @@ Original customer email (for name reference):
 {_body_for_context_m}
 
 Instructions:
-- First line MUST be the greeting (e.g. "Dear Shreya,") — use the name from the email signature/sign-off, NOT the sender display name. Fall back to sender display name only if no signature name is found.
+- First line MUST be the greeting (e.g. "Dear ...,") — use the name from the email signature/sign-off if available, otherwise use the sender display name.
 - Then 1-2 short paragraphs — no table, no attachment list, no sign-off
 - Write in plain text only — no markdown, no bold, no bullet points."""
 
