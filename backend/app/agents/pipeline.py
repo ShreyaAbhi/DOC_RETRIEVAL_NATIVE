@@ -8,6 +8,7 @@ Flow:
 Multi-order: if the email references multiple order IDs, documents are fetched
 for every order and the reply includes a tabular status summary.
 """
+import logging
 import uuid, json, time, re
 from datetime import datetime
 from pathlib import Path
@@ -181,12 +182,34 @@ async def _llm_chat(
         result = _EMAIL_PATTERN.sub("redacted@example.com", result)
         return result
 
-    if provider == "ollama":
-        result = await _ollama_chat(system, user, expect_json, base_url=ollama_url, model=ollama_model)
-        return result, "ollama"
-
     # Anonymize user prompt for external providers if the setting is on
     safe_user = _scrub(user) if anonymize_pii else user
+
+    # Determine fallback provider (external → Ollama, Ollama → first configured external)
+    def _try_external() -> tuple[str, str]:
+        """Try the best available external provider. Raises if none configured."""
+        api_key_openai = (cfg.get("llm_openai_api_key") or "").strip()
+        api_key_anthropic = (cfg.get("llm_anthropic_api_key") or "").strip()
+        if api_key_anthropic:
+            return "anthropic", cfg.get("llm_anthropic_model", "claude-haiku-4-5-20251001").strip()
+        if api_key_openai:
+            return "openai", cfg.get("llm_openai_model", "gpt-4o-mini").strip()
+        raise ValueError("No external LLM provider configured for fallback")
+
+    if provider == "ollama":
+        try:
+            result = await _ollama_chat(system, user, expect_json, base_url=ollama_url, model=ollama_model)
+            return result, "ollama"
+        except Exception as exc:
+            if not fallback_enabled:
+                raise
+            logging.getLogger(__name__).warning("Ollama failed (%s), falling back to external provider", exc)
+            fb_provider, fb_model = _try_external()
+            if fb_provider == "anthropic":
+                result = await _anthropic_chat(cfg, system, safe_user, expect_json)
+            else:
+                result = await _openai_chat(cfg, system, safe_user, expect_json)
+            return result, f"{fb_provider}_fallback_from_ollama|{exc}"
 
     try:
         if provider == "openai":
@@ -467,8 +490,9 @@ def _strip_markdown(text: str) -> str:
     """Normalise LLM output to plain text so all providers produce the same
     email style (matching the Ollama/qwen format).
 
-    Strips bold/italic markers, heading prefixes, and converts markdown
-    bullet lists to clean dashes.
+    Strips bold/italic markers, heading prefixes, converts markdown
+    bullet lists to clean dashes, and removes spurious Subject/Dear lines
+    that external LLMs sometimes inject.
     """
     # Remove bold / italic markers: **text** → text, __text__ → text, *text* → text
     out = re.sub(r'\*{2,3}(.+?)\*{2,3}', r'\1', text)
@@ -482,7 +506,11 @@ def _strip_markdown(text: str) -> str:
     out = re.sub(r'^[\*\+]\s+', '- ', out, flags=re.M)
     # Numbered list with period: "1. item" → "- item" (keep consistent)
     out = re.sub(r'^\d+\.\s+', '- ', out, flags=re.M)
-    return out
+    # Remove "Subject:" lines that external LLMs sometimes prepend
+    out = re.sub(r'^Subject\s*:.*\n*', '', out, flags=re.M | re.I)
+    # Remove "Re:" pseudo-subject only at the very start of the response
+    out = re.sub(r'\A\s*Re\s*:.*\n*', '', out, flags=re.I)
+    return out.strip()
 
 
 # ── Prompt injection defence helpers ──────────────────────────
@@ -1416,9 +1444,11 @@ async def _compose_response(db: AsyncSession, req: EmailRequest,
     _DEFAULT_RESP_INSTRUCTIONS = (
         "- Clearly state which documents are attached\n"
         "- If any documents are missing, mention them explicitly and apologise\n"
-        "- 2 to 3 short paragraphs. No subject line. Professional and friendly tone.\n"
+        "- 2 to 3 short paragraphs. Professional and friendly tone.\n"
         "- Do NOT add any closing, sign-off, or signature — these will be appended automatically by the system.\n"
-        "- Write in plain text only — no markdown, no bold, no bullet points, no numbered lists."
+        "- Write in plain text only — no markdown, no bold, no bullet points, no numbered lists.\n"
+        "- NEVER include a 'Subject:' line — the subject is handled separately by the system.\n"
+        "- Start directly with the greeting (e.g. 'Dear ...,') — no headers or metadata before it."
     )
     cfg_resp_sys   = await db.get(SystemConfig, "llm_response_system_prompt")
     cfg_resp_instr = await db.get(SystemConfig, "llm_response_instructions")
@@ -1636,11 +1666,33 @@ async def _auto_send_response(db: AsyncSession, req: EmailRequest,
     from app.services.email_service import send_email
     import os
 
-    # Resolve and filter to only paths that actually exist on disk
+    # Resolve attachment paths — try direct path first, then search storage dirs
     import logging
     _log = logging.getLogger(__name__)
-    resolved = [str(Path(p).resolve()) if not os.path.isabs(p) else p for p in attachment_paths]
-    valid_paths = [p for p in resolved if os.path.exists(p)]
+    all_search_dirs = [
+        settings.POD_STORAGE_PATH,
+        settings.DOCUMENTS_PATH,
+        settings.PACKING_SLIPS_PATH,
+        settings.INVOICES_PATH,
+    ]
+    valid_paths = []
+    for p in attachment_paths:
+        resolved = str(Path(p).resolve()) if not os.path.isabs(p) else p
+        if os.path.exists(resolved):
+            valid_paths.append(resolved)
+            continue
+        # Fallback: search storage directories by filename (matches approval workflow)
+        basename = os.path.basename(p)
+        found = False
+        for folder in all_search_dirs:
+            candidate = os.path.join(folder, basename)
+            if os.path.exists(candidate):
+                valid_paths.append(candidate)
+                _log.info("Auto-send: resolved %s via fallback in %s", basename, folder)
+                found = True
+                break
+        if not found:
+            _log.warning("Auto-send: attachment not found: %s", p)
     if not valid_paths and attachment_paths:
         _log.warning("Auto-send: none of the attachment paths exist: %s", attachment_paths)
 
