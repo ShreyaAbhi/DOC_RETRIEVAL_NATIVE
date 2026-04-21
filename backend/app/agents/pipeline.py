@@ -1502,6 +1502,9 @@ async def _compose_response(db: AsyncSession, req: EmailRequest,
     instructions = (cfg_resp_instr.value.strip() if cfg_resp_instr and cfg_resp_instr.value.strip()
                     else _DEFAULT_RESP_INSTRUCTIONS)
 
+    # Provide original email body (truncated) so LLM can find the real signer name
+    _body_for_context = (req.body or "")[:600]
+
     user = f"""Write a professional email reply to a customer who requested shipping documents.
 
 ATTACHED DOCUMENTS ({len(docs_attached)} of 3):
@@ -1509,15 +1512,19 @@ ATTACHED DOCUMENTS ({len(docs_attached)} of 3):
 
 {"MISSING DOCUMENTS (not available at this time):" + chr(10) + missing_list if docs_missing else "All requested documents are available."}
 
-Customer name: {req.from_name or req.from_email.split('@')[0]}
+Sender display name (from email header): {req.from_name or req.from_email.split('@')[0]}
 Order / PO reference: {req.extracted_order_id}
 {order_info}
 {"Delivery date: " + str(pod.delivery_date) if pod else ""}
 {"Carrier: " + pod.carrier if pod else ""}
 {"Signed by: " + (pod.signed_by or "On file") if pod else ""}
 
+Original customer email (for name reference):
+{_body_for_context}
+
 Instructions:
-{instructions}"""
+{instructions}
+- IMPORTANT: Address the reply to the person who SIGNED the original email (look for the name in the sign-off/signature). Only fall back to the sender display name if no signature name is found."""
 
     _compose_customer = req.from_name or req.from_email.split('@')[0]
     _compose_pii_map = {_compose_customer: "[CUSTOMER]"} if _compose_customer else {}
@@ -1602,9 +1609,10 @@ async def _compose_response_multi(db: AsyncSession, req: EmailRequest,
 </table>"""
 
     has_missing = bool(missing_orders)
-    customer    = req.from_name or req.from_email.split("@")[0]
+    customer_fallback = req.from_name or req.from_email.split("@")[0]
+    _body_for_context_m = (req.body or "")[:600]
 
-    # Ask LLM for the intro paragraph only — no table, no sign-off
+    # Ask LLM for the greeting name + intro paragraph
     _DEFAULT_RESP_SYSTEM_MULTI = (
         "You are a professional logistics customer service agent. Write clear, concise emails. "
         "Never include a sign-off, closing line, signature, or placeholder text like [Your Name] "
@@ -1617,15 +1625,18 @@ async def _compose_response_multi(db: AsyncSession, req: EmailRequest,
               else _DEFAULT_RESP_SYSTEM_MULTI)
     user = f"""Write ONLY the opening paragraph(s) of a professional email reply to a customer who requested shipping documents.
 
-Customer name: {customer}
+Sender display name (from email header): {customer_fallback}
 {"Some documents are missing for order(s): " + ", ".join(missing_orders) + ". Mention briefly that a detailed status table is attached below and apologize for missing items." if has_missing else "All requested documents are available. Mention that a detailed status table is included below."}
 
+Original customer email (for name reference):
+{_body_for_context_m}
+
 Instructions:
-- 1–2 short paragraphs only — no greeting line, no table, no attachment list, no sign-off
-- Start directly with the body text (e.g. "Please find below a summary of...")
+- First line MUST be the greeting (e.g. "Dear Shreya,") — use the name from the email signature/sign-off, NOT the sender display name. Fall back to sender display name only if no signature name is found.
+- Then 1-2 short paragraphs — no table, no attachment list, no sign-off
 - Write in plain text only — no markdown, no bold, no bullet points."""
 
-    _multi_pii_map = {customer: "[CUSTOMER]"} if customer else {}
+    _multi_pii_map = {customer_fallback: "[CUSTOMER]"} if customer_fallback else {}
 
     multi_provider = "ollama"
     try:
@@ -1637,19 +1648,28 @@ Instructions:
                             f"LLM provider fallback during multi-order composition: {orig} failed, used Ollama",
                             {"original_provider": orig, "error": err}, success=False)
         # Restore real customer name if it was replaced for anonymization
-        llm_intro = llm_intro.replace("[CUSTOMER]", customer)
+        llm_intro = llm_intro.replace("[CUSTOMER]", customer_fallback)
         intro = _strip_markdown(_strip_sign_off(llm_intro))
     except Exception:
-        intro = "Please find below a summary of the shipping document status for your orders."
+        intro = f"Dear {customer_fallback},\n\nPlease find below a summary of the shipping document status for your orders."
         if has_missing:
             intro += " We apologize that some documents are currently unavailable and will follow up shortly."
 
     # Build attachment bullet list
     att_list_html = "".join(f'<li style="margin:2px 0">{a}</li>' for a in all_attachments) or "<li>None</li>"
 
+    # Extract greeting from LLM intro (first line) so we don't double-greet
+    intro_lines = intro.strip().split('\n', 1)
+    if intro_lines[0].strip().lower().startswith('dear'):
+        greeting_html = f"<p>{intro_lines[0].strip()}</p>"
+        intro_body = intro_lines[1].strip() if len(intro_lines) > 1 else ""
+    else:
+        greeting_html = f"<p>Dear {customer_fallback},</p>"
+        intro_body = intro.strip()
+
     body = f"""<div style="font-family:sans-serif;font-size:14px;line-height:1.6;color:#1e293b">
-<p>Dear {customer},</p>
-<p>{intro}</p>
+{greeting_html}
+<p>{intro_body}</p>
 {html_table}
 {"<p style='color:#b45309'>Note: Some documents are currently unavailable for order(s): " + ", ".join(missing_orders) + ". We will follow up to ensure all required documents are received.</p>" if has_missing else ""}
 <p><strong>Attached documents:</strong></p>
