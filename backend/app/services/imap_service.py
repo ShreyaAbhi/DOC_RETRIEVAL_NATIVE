@@ -156,9 +156,9 @@ def _poll_mailbox_sync(
             pdf_attachments = _extract_document_attachments(msg)
 
             # Subject filter check — applies to ALL emails (with or without attachments)
+            # Non-matching emails are left UNSEEN so the user doesn't miss them
             if not _subject_matches(subject, subject_filters):
                 logger.debug("Skipping (no subject match): %s", subject)
-                conn.store(msg_num, "+FLAGS", "\\Seen")
                 continue
 
             if pdf_attachments:
