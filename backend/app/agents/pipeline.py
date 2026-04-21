@@ -1682,12 +1682,17 @@ async def _auto_send_response(db: AsyncSession, req: EmailRequest,
     # Resolve attachment paths — try direct path first, then search storage dirs
     import logging
     _log = logging.getLogger(__name__)
+    # Include SystemConfig-configured paths for network share support
     all_search_dirs = [
         settings.POD_STORAGE_PATH,
         settings.DOCUMENTS_PATH,
         settings.PACKING_SLIPS_PATH,
         settings.INVOICES_PATH,
     ]
+    for cfg_key in ("pod_folder_path", "packing_slip_folder_path", "invoice_folder_path"):
+        cfg_row = await db.get(SystemConfig, cfg_key)
+        if cfg_row and cfg_row.value and cfg_row.value.strip() and cfg_row.value.strip() not in all_search_dirs:
+            all_search_dirs.insert(0, cfg_row.value.strip())
     valid_paths = []
     for p in attachment_paths:
         resolved = str(Path(p).resolve()) if not os.path.isabs(p) else p
@@ -1831,8 +1836,8 @@ async def _request_approval_multi(db: AsyncSession, req: EmailRequest, results: 
     await db.flush()
     await log_audit(
         db, req.id, "approval_requested",
-        f"Multi-order approval requested — {len(attachments_json)} attachment(s)",
-        {"approval_id": str(approval.id), "attachments": attachments_json},
+        f"Multi-order approval requested - {len(attachment_paths)} attachment(s)",
+        {"approval_id": str(approval.id), "attachments": attachment_paths},
     )
 
 

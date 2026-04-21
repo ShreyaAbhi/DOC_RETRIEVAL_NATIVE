@@ -7,7 +7,7 @@ from datetime import datetime
 import os
 
 from app.db.session import get_db
-from app.models.models import ApprovalQueue, EmailRequest, User
+from app.models.models import ApprovalQueue, EmailRequest, SystemConfig, User
 from app.services.audit_service import log_audit
 from app.services.email_service import send_email
 from app.core.config import settings
@@ -90,12 +90,17 @@ async def action_approval(
             # Build attachment list from stored file paths.
             # attachments_json now stores full file paths; fall back to
             # directory search for legacy entries that only stored filenames.
+            # Include SystemConfig-configured paths for network share support.
             all_search_dirs = [
                 settings.POD_STORAGE_PATH,
                 settings.DOCUMENTS_PATH,
                 settings.PACKING_SLIPS_PATH,
                 settings.INVOICES_PATH,
             ]
+            for cfg_key in ("pod_folder_path", "packing_slip_folder_path", "invoice_folder_path"):
+                cfg_row = await db.get(SystemConfig, cfg_key)
+                if cfg_row and cfg_row.value and cfg_row.value.strip() and cfg_row.value.strip() not in all_search_dirs:
+                    all_search_dirs.insert(0, cfg_row.value.strip())
             entries = (appr.attachments_json or []) or [
                 f for f in [appr.draft_attachment,
                              appr.packing_slip_attachment,
