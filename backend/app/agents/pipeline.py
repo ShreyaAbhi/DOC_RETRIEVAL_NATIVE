@@ -29,6 +29,47 @@ from app.services.audit_service import log_audit
 CONFIDENCE_THRESHOLD = settings.CONFIDENCE_THRESHOLD
 
 
+async def _resolve_doc_path(db: AsyncSession, doc) -> str | None:
+    """Return a valid filesystem path for a document record.
+
+    Checks doc.file_path first; if it doesn't exist on disk, tries to
+    find the file by name in the current SystemConfig-configured folders
+    (which may have changed since the record was created, e.g. O:\\ → UNC).
+    Updates the DB record in-place when a new location is found.
+    """
+    import os
+    if not doc or not doc.file_name:
+        return None
+
+    # Fast path: stored path still works
+    if doc.file_path and os.path.exists(doc.file_path):
+        return doc.file_path
+
+    # Build search dirs from current SystemConfig + settings defaults
+    search_dirs: list[str] = []
+    for cfg_key in ("pod_folder_path", "packing_slip_folder_path", "invoice_folder_path"):
+        cfg_row = await db.get(SystemConfig, cfg_key)
+        if cfg_row and cfg_row.value and cfg_row.value.strip():
+            v = cfg_row.value.strip()
+            if v not in search_dirs:
+                search_dirs.append(v)
+    for p in (settings.POD_STORAGE_PATH, settings.DOCUMENTS_PATH,
+              settings.PACKING_SLIPS_PATH, settings.INVOICES_PATH):
+        if p not in search_dirs:
+            search_dirs.append(p)
+
+    basename = os.path.basename(doc.file_name)
+    for folder in search_dirs:
+        candidate = os.path.join(folder, basename)
+        if os.path.exists(candidate):
+            # Update the stale DB record so future lookups are instant
+            doc.file_path = candidate
+            await db.flush()
+            return candidate
+
+    return None
+
+
 # ── Reference number generator ────────────────────────────────
 def make_ref() -> str:
     ts = datetime.now().strftime("%Y%m%d")
@@ -1650,8 +1691,8 @@ async def _load_auto_send_settings(db: AsyncSession) -> dict:
 
 def _qualifies_for_auto_send(req: EmailRequest, pod, ps, inv, cfg: dict) -> bool:
     """Check auto-send eligibility against the current system_config settings.
-    Verifies both that document records exist AND that the files exist on disk."""
-    import os
+    Verifies that document records exist. File existence is checked later
+    via _resolve_doc_path when building attachment_paths."""
     if not cfg['enabled']:
         return False
     confidence = float(req.confidence_score or 0)
@@ -1663,11 +1704,6 @@ def _qualifies_for_auto_send(req: EmailRequest, pod, ps, inv, cfg: dict) -> bool
         return False
     if cfg['require_invoice'] and not inv:
         return False
-    # Verify required files actually exist on disk — don't auto-send with missing attachments
-    for doc, required in [(pod, cfg['require_pod']), (ps, cfg['require_packing_slip']), (inv, cfg['require_invoice'])]:
-        if required and doc and hasattr(doc, 'file_path') and doc.file_path:
-            if not os.path.exists(doc.file_path):
-                return False
     return True
 
 
@@ -1765,10 +1801,11 @@ async def _request_approval(db: AsyncSession, req: EmailRequest,
         inv.file_name if inv else None,
     ] if f]
 
+    # Resolve paths via current SystemConfig folders (not stale DB file_path)
     attachment_paths = [p for p in [
-        pod.file_path if pod else None,
-        ps.file_path  if ps  else None,
-        inv.file_path if inv else None,
+        await _resolve_doc_path(db, pod),
+        await _resolve_doc_path(db, ps),
+        await _resolve_doc_path(db, inv),
     ] if p]
 
     cfg = await _load_auto_send_settings(db)
@@ -1801,9 +1838,10 @@ async def _request_approval_multi(db: AsyncSession, req: EmailRequest, results: 
     attachment_paths: list[str] = []
     for _, _, pod, ps, inv in results:
         for doc in [pod, ps, inv]:
-            if doc and doc.file_path and doc.file_path not in seen:
-                seen.add(doc.file_path)
-                attachment_paths.append(doc.file_path)
+            resolved = await _resolve_doc_path(db, doc) if doc else None
+            if resolved and resolved not in seen:
+                seen.add(resolved)
+                attachment_paths.append(resolved)
 
     # Check auto-send: all orders must satisfy the configured document requirements
     cfg = await _load_auto_send_settings(db)

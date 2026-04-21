@@ -114,6 +114,7 @@ async def send_email(
         else:
             msg.attach(MIMEText(body, 'plain'))
 
+        attached_count = 0
         if attachments:
             for path in attachments:
                 try:
@@ -123,8 +124,13 @@ async def send_email(
                     encoders.encode_base64(part)
                     part.add_header('Content-Disposition', f'attachment; filename="{os.path.basename(path)}"')
                     msg.attach(part)
+                    attached_count += 1
                 except Exception as e:
                     logger.error(f"Failed to attach {path}: {e}")
+            if attached_count < len(attachments):
+                logger.warning("Only %d of %d attachments succeeded", attached_count, len(attachments))
+            else:
+                logger.info("All %d attachment(s) added successfully", attached_count)
 
         with smtplib.SMTP(host, port, timeout=30) as server:
             server.ehlo()

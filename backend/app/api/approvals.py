@@ -115,9 +115,11 @@ async def action_approval(
                 if os.path.exists(entry):
                     attachments.append(entry)
                     continue
-                # Fallback: search storage directories (legacy filename-only entries)
+                # Extract just the filename — entry may be a stale absolute path
+                # (e.g. O:\... from before UNC paths were configured)
+                basename = os.path.basename(entry)
                 for folder in all_search_dirs:
-                    candidate = os.path.join(folder, entry)
+                    candidate = os.path.join(folder, basename)
                     if os.path.exists(candidate):
                         attachments.append(candidate)
                         break
