@@ -68,7 +68,8 @@ def _parse_from(raw: str):
 # ---------------------------------------------------------------------------
 
 def _subject_matches(subject: str, filters: list[str]) -> bool:
-    """Return True if subject contains any filter keyword (case-insensitive). Empty filters = accept all."""
+    """Return True if subject contains any filter keyword (case-insensitive).
+    Empty filters = accept all (no filtering configured)."""
     if not filters:
         return True
     lower = subject.lower()
@@ -154,8 +155,12 @@ def _poll_mailbox_sync(
             references  = [r.strip() for r in (msg.get("References") or "").split() if r.strip()]
             pdf_attachments = _extract_document_attachments(msg)
 
-            # Emails with document attachments are incoming POD deliveries from carriers —
-            # always ingest them regardless of subject filters.
+            # Subject filter check — applies to ALL emails (with or without attachments)
+            if not _subject_matches(subject, subject_filters):
+                logger.debug("Skipping (no subject match): %s", subject)
+                conn.store(msg_num, "+FLAGS", "\\Seen")
+                continue
+
             if pdf_attachments:
                 results.append({
                     "from_email":       from_email or from_raw,
@@ -168,12 +173,6 @@ def _poll_mailbox_sync(
                     "in_reply_to":      in_reply_to,
                     "references":       references,
                 })
-                conn.store(msg_num, "+FLAGS", "\\Seen")
-                continue
-
-            # Skip plain emails that don't match any subject filter
-            if not _subject_matches(subject, subject_filters):
-                logger.debug("Skipping (no subject match): %s", subject)
                 conn.store(msg_num, "+FLAGS", "\\Seen")
                 continue
 
