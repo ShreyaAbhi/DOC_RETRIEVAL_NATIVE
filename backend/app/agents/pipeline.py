@@ -527,6 +527,36 @@ def _strip_sign_off(text: str) -> str:
     return _SIGN_OFF_RE.sub('', text).rstrip()
 
 
+# ── Extract signer name from email body ──────────────────────
+_SIGNER_RE = re.compile(
+    r'(?:thank(?:s| you)|regards|best|cheers|sincerely|warm regards|kind regards|best regards)'
+    r'[,!.]?\s*\n\s*\n?\s*'
+    r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\s*$',
+    re.I | re.M
+)
+_LAST_NAME_RE = re.compile(
+    r'\n\s*\n\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\s*$'
+)
+
+def _extract_signer_name(email_body: str) -> str:
+    """Extract the name from the sign-off of an email body.
+
+    Looks for patterns like "Thanks,\\nShreya" or "Regards,\\nJohn Smith".
+    Returns empty string if no name is found — callers should use "Hi" instead
+    of falling back to From header names.
+    """
+    if not email_body:
+        return ""
+    body = email_body.strip()
+    for pat in (_SIGNER_RE, _LAST_NAME_RE):
+        m = pat.search(body)
+        if m:
+            name = m.group(1).strip()
+            if len(name.split()) <= 3 and len(name) < 40:
+                return name
+    return ""
+
+
 def _strip_markdown(text: str) -> str:
     """Normalise LLM output to plain text so all providers produce the same
     email style (matching the Ollama/qwen format).
@@ -1493,8 +1523,7 @@ async def _compose_response(db: AsyncSession, req: EmailRequest,
         "- Do NOT add any closing, sign-off, or signature — these will be appended automatically by the system.\n"
         "- Write in plain text only — no markdown, no bold, no bullet points, no numbered lists.\n"
         "- NEVER include a 'Subject:' line — the subject is handled separately by the system.\n"
-        "- Start directly with the greeting (e.g. 'Dear ...,') — no headers or metadata before it.\n"
-        "- Address the reply to the person who SIGNED the original email (look for the name in the sign-off/signature). Only fall back to the sender display name if no signature name is found."
+        "- Start directly with the greeting (e.g. 'Dear ...,') — no headers or metadata before it."
     )
     cfg_resp_sys   = await db.get(SystemConfig, "llm_response_system_prompt")
     cfg_resp_instr = await db.get(SystemConfig, "llm_response_instructions")
@@ -1503,8 +1532,10 @@ async def _compose_response(db: AsyncSession, req: EmailRequest,
     instructions = (cfg_resp_instr.value.strip() if cfg_resp_instr and cfg_resp_instr.value.strip()
                     else _DEFAULT_RESP_INSTRUCTIONS)
 
-    # Provide original email body (truncated) so LLM can find the real signer name
-    _body_for_context = (req.body or "")[:600]
+    # Extract signer name from email body (regex); empty = no name found
+    _compose_customer = req.from_name or req.from_email.split('@')[0]
+    _greeting_name = _extract_signer_name(req.body or "")
+    _greeting_line = f'Start with "Dear {_greeting_name}," — do not use any other name.' if _greeting_name else 'Start with "Hi," — do not use a name in the greeting.'
 
     user = f"""Write a professional email reply to a customer who requested shipping documents.
 
@@ -1513,20 +1544,16 @@ ATTACHED DOCUMENTS ({len(docs_attached)} of 3):
 
 {"MISSING DOCUMENTS (not available at this time):" + chr(10) + missing_list if docs_missing else "All requested documents are available."}
 
-Sender display name (from email header): {req.from_name or req.from_email.split('@')[0]}
+{_greeting_line}
+
 Order / PO reference: {req.extracted_order_id}
 {order_info}
 {"Delivery date: " + str(pod.delivery_date) if pod else ""}
 {"Carrier: " + pod.carrier if pod else ""}
 {"Signed by: " + (pod.signed_by or "On file") if pod else ""}
 
-Original customer email (for name reference):
-{_body_for_context}
-
 Instructions:
 {instructions}"""
-
-    _compose_customer = req.from_name or req.from_email.split('@')[0]
     _compose_pii_map = {_compose_customer: "[CUSTOMER]"} if _compose_customer else {}
 
     compose_provider = "ollama"
@@ -1543,9 +1570,61 @@ Instructions:
         body = _strip_markdown(_strip_sign_off(llm_body))
     except Exception:
         doc_list = attached_list
-        body = (f"Dear {req.from_name or 'Customer'},\n\n"
+        _fallback_greeting = f"Dear {_greeting_name}," if _greeting_name else "Hi,"
+        body = (f"{_fallback_greeting}\n\n"
                 f"Please find attached the requested documents for order {req.extracted_order_id}.\n\n"
                 f"Attached documents:\n{doc_list}")
+
+    # Build a professional HTML document-status table for single-order responses
+    def _status_cell(doc):
+        if doc:
+            return ('<td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;'
+                    'color:#15803d;text-align:center">&#10003; Attached</td>')
+        return ('<td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;'
+                'color:#dc2626;text-align:center">&#10007; Missing</td>')
+
+    order_label = req.extracted_order_id or "—"
+    delivery_label = ""
+    if req.order_id:
+        result_o = await db.execute(select(Order).where(Order.id == req.order_id))
+        order_o = result_o.scalar_one_or_none()
+        if order_o:
+            order_label = order_o.customer_order_number or order_o.my_delivery_number or order_label
+            delivery_label = order_o.my_delivery_number or "—"
+    if not delivery_label:
+        delivery_label = "—"
+
+    single_table = f"""
+<table style="border-collapse:collapse;width:100%;max-width:700px;font-family:Segoe UI,Arial,sans-serif;font-size:14px;margin:20px 0;border:1px solid #e2e8f0;border-radius:6px">
+  <thead>
+    <tr style="background:#1e40af">
+      <th style="padding:12px 14px;text-align:left;color:#ffffff;font-weight:600;border-bottom:2px solid #1e3a8a">Order</th>
+      <th style="padding:12px 14px;text-align:left;color:#ffffff;font-weight:600;border-bottom:2px solid #1e3a8a">Delivery No.</th>
+      <th style="padding:12px 14px;text-align:center;color:#ffffff;font-weight:600;border-bottom:2px solid #1e3a8a">POD</th>
+      <th style="padding:12px 14px;text-align:center;color:#ffffff;font-weight:600;border-bottom:2px solid #1e3a8a">Packing Slip</th>
+      <th style="padding:12px 14px;text-align:center;color:#ffffff;font-weight:600;border-bottom:2px solid #1e3a8a">Invoice</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr style="background:#ffffff">
+      <td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;font-weight:600">{order_label}</td>
+      <td style="padding:10px 14px;border-bottom:1px solid #e2e8f0">{delivery_label}</td>
+      {_status_cell(pod)}
+      {_status_cell(ps)}
+      {_status_cell(inv)}
+    </tr>
+  </tbody>
+</table>"""
+
+    # Convert plain-text body to HTML with the table
+    body_paragraphs = "".join(
+        f"<p>{line}</p>" if line.strip() else ""
+        for line in body.split("\n")
+    )
+    body = f"""<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;line-height:1.6;color:#1e293b">
+{body_paragraphs}
+{single_table}
+</div>"""
 
     req.response_subject = f"Re: {req.subject}"
     req.response_body    = body
@@ -1567,19 +1646,25 @@ async def _compose_response_multi(db: AsyncSession, req: EmailRequest,
     missing_orders: list[str] = []
     table_rows_html = ""
 
-    for order_id_str, order, pod, ps, inv in results:
+    for row_idx, (order_id_str, order, pod, ps, inv) in enumerate(results):
         order_label = (order.customer_order_number or order.my_delivery_number or order_id_str) if order else order_id_str
         delivery = (order.my_delivery_number or "—") if order else "Not found"
 
+        row_bg = "#ffffff" if row_idx % 2 == 0 else "#f8fafc"
+
         def _cell(doc, label):
             if doc:
-                return f'<td style="padding:8px 12px;color:#16a34a;font-weight:500">&#10003; Attached</td>'
-            return f'<td style="padding:8px 12px;color:#dc2626">&#10007; {label} Missing</td>'
+                return (f'<td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;'
+                        f'color:#15803d;text-align:center">'
+                        f'&#10003; Attached</td>')
+            return (f'<td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;'
+                    f'color:#dc2626;text-align:center">'
+                    f'&#10007; Missing</td>')
 
         table_rows_html += (
-            f'<tr>'
-            f'<td style="padding:8px 12px;font-weight:500">{order_label}</td>'
-            f'<td style="padding:8px 12px">{delivery}</td>'
+            f'<tr style="background:{row_bg}">'
+            f'<td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;font-weight:600">{order_label}</td>'
+            f'<td style="padding:10px 14px;border-bottom:1px solid #e2e8f0">{delivery}</td>'
             + _cell(pod, "POD")
             + _cell(ps, "Packing Slip")
             + _cell(inv, "Invoice")
@@ -1593,14 +1678,14 @@ async def _compose_response_multi(db: AsyncSession, req: EmailRequest,
             missing_orders.append(order_label)
 
     html_table = f"""
-<table style="border-collapse:collapse;width:100%;font-family:sans-serif;font-size:14px;margin:16px 0">
+<table style="border-collapse:collapse;width:100%;max-width:700px;font-family:Segoe UI,Arial,sans-serif;font-size:14px;margin:20px 0;border:1px solid #e2e8f0;border-radius:6px">
   <thead>
-    <tr style="background:#f1f5f9">
-      <th style="padding:10px 12px;text-align:left;border-bottom:2px solid #cbd5e1">Order</th>
-      <th style="padding:10px 12px;text-align:left;border-bottom:2px solid #cbd5e1">Delivery No.</th>
-      <th style="padding:10px 12px;text-align:left;border-bottom:2px solid #cbd5e1">POD</th>
-      <th style="padding:10px 12px;text-align:left;border-bottom:2px solid #cbd5e1">Packing Slip</th>
-      <th style="padding:10px 12px;text-align:left;border-bottom:2px solid #cbd5e1">Invoice</th>
+    <tr style="background:#1e40af">
+      <th style="padding:12px 14px;text-align:left;color:#ffffff;font-weight:600;border-bottom:2px solid #1e3a8a">Order</th>
+      <th style="padding:12px 14px;text-align:left;color:#ffffff;font-weight:600;border-bottom:2px solid #1e3a8a">Delivery No.</th>
+      <th style="padding:12px 14px;text-align:center;color:#ffffff;font-weight:600;border-bottom:2px solid #1e3a8a">POD</th>
+      <th style="padding:12px 14px;text-align:center;color:#ffffff;font-weight:600;border-bottom:2px solid #1e3a8a">Packing Slip</th>
+      <th style="padding:12px 14px;text-align:center;color:#ffffff;font-weight:600;border-bottom:2px solid #1e3a8a">Invoice</th>
     </tr>
   </thead>
   <tbody>
@@ -1610,9 +1695,12 @@ async def _compose_response_multi(db: AsyncSession, req: EmailRequest,
 
     has_missing = bool(missing_orders)
     customer_fallback = req.from_name or req.from_email.split("@")[0]
-    _body_for_context_m = (req.body or "")[:600]
+    _greeting_name_m = _extract_signer_name(req.body or "")
+    _greeting_line_m = (f'Start with "Dear {_greeting_name_m}," — do not use any other name.'
+                        if _greeting_name_m
+                        else 'Start with "Hi," — do not use a name in the greeting.')
 
-    # Ask LLM for the greeting name + intro paragraph
+    # Ask LLM for intro paragraph only (greeting name is pre-determined)
     _DEFAULT_RESP_SYSTEM_MULTI = (
         "You are a professional logistics customer service agent. Write clear, concise emails. "
         "Never include a sign-off, closing line, signature, or placeholder text like [Your Name] "
@@ -1625,14 +1713,12 @@ async def _compose_response_multi(db: AsyncSession, req: EmailRequest,
               else _DEFAULT_RESP_SYSTEM_MULTI)
     user = f"""Write ONLY the opening paragraph(s) of a professional email reply to a customer who requested shipping documents.
 
-Sender display name (from email header): {customer_fallback}
-{"Some documents are missing for order(s): " + ", ".join(missing_orders) + ". Mention briefly that a detailed status table is attached below and apologize for missing items." if has_missing else "All requested documents are available. Mention that a detailed status table is included below."}
+{_greeting_line_m}
 
-Original customer email (for name reference):
-{_body_for_context_m}
+{"Some documents are missing for order(s): " + ", ".join(missing_orders) + ". Mention briefly that a detailed status table is included below and apologize for missing items." if has_missing else "All requested documents are available. Mention that a detailed status table is included below."}
 
 Instructions:
-- First line MUST be the greeting (e.g. "Dear ...,") — use the name from the email signature/sign-off if available, otherwise use the sender display name.
+- {_greeting_line_m}
 - Then 1-2 short paragraphs — no table, no attachment list, no sign-off
 - Write in plain text only — no markdown, no bold, no bullet points."""
 
@@ -1651,7 +1737,8 @@ Instructions:
         llm_intro = llm_intro.replace("[CUSTOMER]", customer_fallback)
         intro = _strip_markdown(_strip_sign_off(llm_intro))
     except Exception:
-        intro = f"Dear {customer_fallback},\n\nPlease find below a summary of the shipping document status for your orders."
+        _fallback_greet_m = f"Dear {_greeting_name_m}," if _greeting_name_m else "Hi,"
+        intro = f"{_fallback_greet_m}\n\nPlease find below a summary of the shipping document status for your orders."
         if has_missing:
             intro += " We apologize that some documents are currently unavailable and will follow up shortly."
 
@@ -1659,19 +1746,20 @@ Instructions:
     att_list_html = "".join(f'<li style="margin:2px 0">{a}</li>' for a in all_attachments) or "<li>None</li>"
 
     # Extract greeting from LLM intro (first line) so we don't double-greet
+    _fallback_html_greet = f"<p>Dear {_greeting_name_m},</p>" if _greeting_name_m else "<p>Hi,</p>"
     intro_lines = intro.strip().split('\n', 1)
-    if intro_lines[0].strip().lower().startswith('dear'):
+    if intro_lines[0].strip().lower().startswith(('dear', 'hi,')):
         greeting_html = f"<p>{intro_lines[0].strip()}</p>"
         intro_body = intro_lines[1].strip() if len(intro_lines) > 1 else ""
     else:
-        greeting_html = f"<p>Dear {customer_fallback},</p>"
+        greeting_html = _fallback_html_greet
         intro_body = intro.strip()
 
-    body = f"""<div style="font-family:sans-serif;font-size:14px;line-height:1.6;color:#1e293b">
+    body = f"""<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px;line-height:1.6;color:#1e293b">
 {greeting_html}
 <p>{intro_body}</p>
 {html_table}
-{"<p style='color:#b45309'>Note: Some documents are currently unavailable for order(s): " + ", ".join(missing_orders) + ". We will follow up to ensure all required documents are received.</p>" if has_missing else ""}
+{"<p style='color:#b45309;font-style:italic'>Note: Some documents are currently unavailable for order(s): " + ", ".join(missing_orders) + ". We will follow up to ensure all required documents are received.</p>" if has_missing else ""}
 <p><strong>Attached documents:</strong></p>
 <ul style="margin:4px 0;padding-left:20px">{att_list_html}</ul>
 </div>"""
