@@ -577,10 +577,15 @@ def _strip_markdown(text: str) -> str:
     out = re.sub(r'^[\*\+]\s+', '- ', out, flags=re.M)
     # Numbered list with period: "1. item" → "- item" (keep consistent)
     out = re.sub(r'^\d+\.\s+', '- ', out, flags=re.M)
+    # Remove markdown tables: lines starting/ending with | or separator lines like |---|---|
+    out = re.sub(r'^\|.*\|\s*$', '', out, flags=re.M)
+    out = re.sub(r'^\s*\|?[-:]+\|[-:|]+\|?\s*$', '', out, flags=re.M)
     # Remove "Subject:" lines that external LLMs sometimes prepend
     out = re.sub(r'^Subject\s*:.*\n*', '', out, flags=re.M | re.I)
     # Remove "Re:" pseudo-subject only at the very start of the response
     out = re.sub(r'\A\s*Re\s*:.*\n*', '', out, flags=re.I)
+    # Collapse 3+ consecutive blank lines to 2
+    out = re.sub(r'\n{3,}', '\n\n', out)
     return out.strip()
 
 
@@ -1517,13 +1522,14 @@ async def _compose_response(db: AsyncSession, req: EmailRequest,
         "no italics (*), no headings (#), no bullet points (- or *). Use normal paragraphs."
     )
     _DEFAULT_RESP_INSTRUCTIONS = (
-        "- Clearly state which documents are attached\n"
-        "- If any documents are missing, mention them explicitly and apologise\n"
-        "- 2 to 3 short paragraphs. Professional and friendly tone.\n"
+        "- Do NOT list, name, or enumerate individual documents (no 'POD', 'Packing Slip', 'Invoice', etc.) — a detailed status table is appended separately after your text.\n"
+        "- If any documents are missing, mention briefly that some are unavailable and apologise — but do NOT say which ones.\n"
+        "- If all documents are available, simply say 'the requested documents are attached' — nothing more specific.\n"
+        "- 1 to 2 short paragraphs. Professional and friendly tone.\n"
         "- Do NOT add any closing, sign-off, or signature — these will be appended automatically by the system.\n"
-        "- Write in plain text only — no markdown, no bold, no bullet points, no numbered lists.\n"
+        "- Write in plain text only — no markdown, no bold, no bullet points, no numbered lists, no tables.\n"
         "- NEVER include a 'Subject:' line — the subject is handled separately by the system.\n"
-        "- Start directly with the greeting (e.g. 'Dear ...,') — no headers or metadata before it."
+        "- Start directly with the greeting — no headers or metadata before it."
     )
     cfg_resp_sys   = await db.get(SystemConfig, "llm_response_system_prompt")
     cfg_resp_instr = await db.get(SystemConfig, "llm_response_instructions")
