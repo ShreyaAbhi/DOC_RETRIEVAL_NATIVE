@@ -2103,9 +2103,11 @@ function Orders() {
       qcl.invalidateQueries(['orders'])
       qcl.invalidateQueries(['pod-registry'])
       qcl.invalidateQueries(['pod-registry-stats'])
-      const { created, errors } = res.data
-      if (!errors?.length) toast.success(`${created} order(s) imported`)
-      else toast.success(`${created} imported, ${errors.length} error(s)`)
+      const { created, updated = 0, errors } = res.data
+      const parts = [`${created} created`]
+      if (updated) parts.push(`${updated} updated`)
+      if (errors?.length) parts.push(`${errors.length} error(s)`)
+      toast.success(parts.join(', '))
     },
     onError: e => toast.error(e.response?.data?.detail || 'Import failed'),
   })
@@ -2305,7 +2307,8 @@ function Orders() {
           <div className="flex items-center justify-between">
             <span className={cn('font-mono', dark?'text-slate-300':'text-gray-700')}>
               Import result: <span className="text-green-400">{importResult.created} created</span>
-              {importResult.skipped > 0 && <>, <span className={dark?'text-yellow-400':'text-amber-600'}>{importResult.skipped} skipped (already exist)</span></>}
+              {importResult.updated > 0 && <>, <span className="text-blue-400">{importResult.updated} updated</span></>}
+              {importResult.skipped > 0 && <>, <span className={dark?'text-yellow-400':'text-amber-600'}>{importResult.skipped} skipped (unchanged)</span></>}
               {importResult.errors?.length > 0 && <>, <span className="text-red-400">{importResult.errors.length} error(s)</span></>}
             </span>
             <button onClick={() => setImportResult(null)} className={cn('p-1 rounded', dark?'text-slate-500 hover:bg-slate-800':'text-gray-400 hover:bg-gray-100')}><X size={14}/></button>

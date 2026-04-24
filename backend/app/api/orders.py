@@ -130,7 +130,20 @@ async def import_orders(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
-    """Bulk import orders from a .xlsx or .csv file. Skips existing customer_order_numbers."""
+    """
+    Bulk import orders from a .xlsx or .csv file.
+
+    Uniqueness rules:
+      - Order identity:  my_delivery_number  (one Order per delivery number)
+      - OrderLine identity: (my_delivery_number, material_number, lot_number)
+
+    On import:
+      - Row without my_delivery_number → error.
+      - Order not found → create new Order; line added → created.
+      - Order found + matching line (same NDC + lot) with same quantity → skipped.
+      - Order found + matching line with different quantity → quantity updated (latest-wins) → updated.
+      - Order found + no matching line → new line added → created.
+    """
     content = await file.read()
     filename = (file.filename or '').lower()
 
@@ -151,88 +164,112 @@ async def import_orders(
         raise HTTPException(400, "Only .xlsx or .csv files are supported")
 
     if not rows:
-        return {"created": 0, "skipped": 0, "errors": ["No data rows found in file"]}
+        return {"created": 0, "updated": 0, "skipped": 0, "errors": ["No data rows found in file"]}
 
     def _s(v):
         """Return stripped string or None."""
         s = str(v or '').strip()
         return s or None
 
-    # Group rows by customer_order_number
-    groups: dict = defaultdict(list)
-    ungrouped = 0
-    for row in rows:
-        con = _s(row.get('customer_order_number'))
-        if con:
-            groups[con].append(row)
-        else:
-            ungrouped += 1
+    def _qty(v):
+        try:
+            return float(v) if v not in (None, '') else None
+        except (ValueError, TypeError):
+            return None
 
     created = 0
+    updated = 0
     skipped = 0
     errors: list = []
     new_order_ids: list = []
-    if ungrouped:
-        errors.append(f"{ungrouped} row(s) skipped: missing customer_order_number")
 
-    for con, group_rows in groups.items():
+    # Cache Orders we've already looked up / created during this import,
+    # keyed by my_delivery_number, to avoid re-querying per row.
+    order_cache: dict = {}
+
+    for idx, row in enumerate(rows, start=2):  # row 1 is header
+        mdn = _s(row.get('my_delivery_number'))
+        if not mdn:
+            errors.append(f"row {idx}: missing my_delivery_number")
+            continue
         try:
             async with db.begin_nested():
-                existing = await db.execute(
-                    select(Order).where(Order.customer_order_number == con)
-                )
-                if existing.scalar_one_or_none():
-                    skipped += 1
-                    continue
+                order = order_cache.get(mdn)
+                if order is None:
+                    r = await db.execute(
+                        select(Order).where(Order.my_delivery_number == mdn)
+                    )
+                    order = r.scalars().first()
+                    if order is None:
+                        order = Order(
+                            customer_order_number=_s(row.get('customer_order_number')) or mdn,
+                            my_delivery_number=mdn,
+                            warehouse_delivery_number=_s(row.get('warehouse_delivery_number')),
+                            sales_order_number=_s(row.get('sales_order_number')),
+                            invoice_number=_s(row.get('invoice_number')),
+                            customer_name=_s(row.get('customer_name')),
+                            customer_email=_s(row.get('customer_email')),
+                        )
+                        db.add(order)
+                        await db.flush()
+                        await _upsert_pod_registry(db, mdn, order.id, order.customer_order_number)
+                        new_order_ids.append(str(order.id))
+                    order_cache[mdn] = order
 
-                first = group_rows[0]
-                order = Order(
-                    customer_order_number=con,
-                    my_delivery_number=_s(first.get('my_delivery_number')),
-                    warehouse_delivery_number=_s(first.get('warehouse_delivery_number')),
-                    sales_order_number=_s(first.get('sales_order_number')),
-                    invoice_number=_s(first.get('invoice_number')),
-                    customer_name=_s(first.get('customer_name')),
-                    customer_email=_s(first.get('customer_email')),
-                )
-                db.add(order)
-                await db.flush()
+                material = _s(row.get('material_number'))
+                lot = _s(row.get('lot_number'))
+                new_qty = _qty(row.get('quantity'))
 
-                for i, row in enumerate(group_rows):
+                # Find existing line by (order_id, material_number, lot_number).
+                # Use .first() to tolerate any historical duplicates.
+                line_q = await db.execute(
+                    select(OrderLine).where(
+                        OrderLine.order_id == order.id,
+                        OrderLine.material_number == material,
+                        OrderLine.lot_number == lot,
+                    )
+                )
+                existing_line = line_q.scalars().first()
+
+                if existing_line is not None:
+                    old_qty = float(existing_line.quantity) if existing_line.quantity is not None else None
+                    if old_qty == new_qty:
+                        skipped += 1
+                    else:
+                        existing_line.quantity = new_qty
+                        updated += 1
+                else:
                     try:
-                        line_num = int(row.get('line_number') or i + 1)
+                        line_num = int(row.get('line_number')) if row.get('line_number') not in (None, '') else None
                     except (ValueError, TypeError):
-                        line_num = i + 1
-                    try:
-                        qty = float(row.get('quantity')) if row.get('quantity') not in (None, '') else None
-                    except (ValueError, TypeError):
-                        qty = None
+                        line_num = None
+                    if line_num is None:
+                        # Fall back to (count of existing lines + 1) so numbering stays stable.
+                        cnt_q = await db.execute(
+                            select(OrderLine).where(OrderLine.order_id == order.id)
+                        )
+                        line_num = len(cnt_q.scalars().all()) + 1
                     db.add(OrderLine(
                         order_id=order.id,
                         line_number=line_num,
-                        material_number=_s(row.get('material_number')),
+                        material_number=material,
                         material_description=_s(row.get('material_description')),
-                        lot_number=_s(row.get('lot_number')),
-                        quantity=qty,
+                        lot_number=lot,
+                        quantity=new_qty,
                         unit_of_measure=_s(row.get('unit_of_measure')),
                         tracking_number=_s(row.get('tracking_number')),
                         carrier=_s(row.get('carrier')) or 'UPS',
                     ))
-
-                if order.my_delivery_number:
-                    await _upsert_pod_registry(db, order.my_delivery_number, order.id, order.customer_order_number)
-
-                created += 1
-                new_order_ids.append(str(order.id))
+                    created += 1
         except Exception as e:
-            errors.append(f"{con}: {str(e)}")
+            errors.append(f"row {idx} (delivery {mdn}): {str(e)}")
 
     await db.commit()
-    # Trigger Power Automate desktop flows if configured (fire-and-forget)
+    # Trigger Power Automate desktop flows if configured (fire-and-forget) — only for newly created orders
     if new_order_ids:
         from app.core.tasks import trigger_power_automate_task
         trigger_power_automate_task.delay(new_order_ids)
-    return {"created": created, "skipped": skipped, "errors": errors}
+    return {"created": created, "updated": updated, "skipped": skipped, "errors": errors}
 
 
 @router.delete("/{order_id}")
