@@ -126,12 +126,21 @@ async def action_approval(
 
             email_subject = appr.draft_subject or f"Re: {req.subject}"
             email_body = req.response_body or appr.draft_body or ""
+            _quoted = {
+                "from_name":  req.from_name or "",
+                "from_email": req.from_email or "",
+                "date":       req.received_at,
+                "subject":    req.subject or "",
+                "body":       req.body or "",
+            }
             send_result = await send_email(
                 db,
                 to=req.from_email,
                 subject=email_subject,
                 body=email_body,
                 attachments=attachments or None,
+                quoted_original=_quoted,
+                in_reply_to=req.imap_message_id,
             )
 
             req.status = "completed"

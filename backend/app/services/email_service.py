@@ -11,7 +11,8 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
-from email.utils import make_msgid
+import html as _html
+from email.utils import make_msgid, format_datetime
 from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -64,6 +65,8 @@ async def send_email(
     body: str,
     attachments: Optional[List[str]] = None,  # list of file paths
     reply_to: Optional[str] = None,
+    quoted_original: Optional[dict] = None,
+    in_reply_to: Optional[str] = None,
 ) -> dict:
     """
     Send an email. Returns {'sent': True/False, 'message_id': ..., 'simulated': True/False}
@@ -89,6 +92,15 @@ async def send_email(
         msg['Message-ID'] = make_msgid(domain=(host or 'mail'))
         if reply_to:
             msg['Reply-To'] = reply_to
+        if in_reply_to:
+            # Ensure angle brackets — RFC 5322 expects <...>
+            mid = in_reply_to.strip()
+            if not mid.startswith('<'):
+                mid = '<' + mid
+            if not mid.endswith('>'):
+                mid = mid + '>'
+            msg['In-Reply-To'] = mid
+            msg['References'] = mid
 
         body_is_html = body.lstrip().startswith('<')
 
@@ -105,6 +117,41 @@ async def send_email(
 
         if signature_html:
             body_html += '<br><hr style="border:none;border-top:1px solid #ccc;margin:16px 0">' + signature_html
+
+        # Append a quoted original-email block (standard reply behaviour).
+        # Placed AFTER the signature, matching Gmail/Outlook convention.
+        if quoted_original:
+            q_from_name  = (quoted_original.get('from_name') or '').strip()
+            q_from_email = (quoted_original.get('from_email') or '').strip()
+            q_date       = quoted_original.get('date')  # datetime or str
+            q_subject    = (quoted_original.get('subject') or '').strip()
+            q_body       = (quoted_original.get('body') or '').strip()
+
+            # Human-readable date string
+            if hasattr(q_date, 'strftime'):
+                q_date_str = q_date.strftime('%a, %b %d, %Y at %I:%M %p')
+            else:
+                q_date_str = str(q_date or '')
+
+            q_from_disp = f"{q_from_name} <{q_from_email}>" if q_from_name else q_from_email
+            header_line = f"On {q_date_str}, {q_from_disp} wrote:" if q_date_str else f"{q_from_disp} wrote:"
+
+            # Plain-text leg: prefix every line with '> '
+            _lines = q_body.splitlines() or ['']
+            plain_quote_lines = "\n".join('> ' + ln for ln in _lines)
+            plain_body += "\n\n" + header_line + "\n" + plain_quote_lines
+
+            # HTML leg: escape, preserve line breaks, wrap in a styled blockquote
+            q_body_html = _html.escape(q_body).replace("\n", "<br>\n")
+            body_html += (
+                '<br><br>'
+                f'<div style="color:#555;font-size:13px;font-family:sans-serif">{_html.escape(header_line)}</div>'
+                '<blockquote style="margin:6px 0 0 0;padding:4px 0 4px 12px;'
+                'border-left:2px solid #cccccc;color:#555;font-size:13px;'
+                'font-family:sans-serif;white-space:pre-wrap">'
+                f'{q_body_html}'
+                '</blockquote>'
+            )
 
         if signature_html or body_is_html:
             alt = MIMEMultipart('alternative')

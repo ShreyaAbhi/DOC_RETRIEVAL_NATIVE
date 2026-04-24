@@ -590,6 +590,43 @@ def _strip_markdown(text: str) -> str:
     return out.strip()
 
 
+_DOC_TYPE_WORDS = (
+    r'(?:Proof of Delivery|POD|Packing Slip|Packing List|Invoice|'
+    r'Bill of Lading|BOL|Delivery Note|Shipping Document)'
+)
+_DOC_LIST_PREAMBLE_RE = re.compile(
+    r'^[\t ]*(?:The |Below are the |Here are the |Attached |Please find )?'
+    r'(?:attached |requested )?documents?(?: are| is)?(?: as follows| attached| included)?[\s:—-]*$',
+    re.I | re.M,
+)
+_DOC_LIST_LINE_RE = re.compile(
+    rf'^[\t ]*[-*•·]?\s*\(?{_DOC_TYPE_WORDS}\)?\b[^\n]*$',
+    re.I | re.M,
+)
+
+
+def _strip_doc_enumeration(text: str) -> str:
+    """Remove any residual document-list enumeration the LLM might emit.
+
+    The email template appends a per-document status table after the body
+    (see _compose_response).  The LLM is explicitly told not to list
+    documents, but some providers still do — often producing:
+
+        The attached documents are as follows:
+        - Proof of Delivery (POD): ....pdf
+        - Packing Slip: ....pdf
+        - Invoice: ....pdf
+
+    This function strips such preamble + enumerated bullets so the user
+    never sees the information twice (once in body, again in the table).
+    """
+    out = _DOC_LIST_PREAMBLE_RE.sub('', text)
+    out = _DOC_LIST_LINE_RE.sub('', out)
+    # Collapse blank lines created by removals
+    out = re.sub(r'\n{3,}', '\n\n', out)
+    return out.strip()
+
+
 # ── Prompt injection defence helpers ──────────────────────────
 _INJECTION_RE = re.compile(
     r'\b(ignore|disregard|forget|override|bypass)\b.{0,40}\b(previous|prior|above|all|any)\b.{0,40}\b(instruction|prompt|rule|context|system|directive)\b'
@@ -1544,20 +1581,28 @@ async def _compose_response(db: AsyncSession, req: EmailRequest,
     _greeting_name = _extract_signer_name(req.body or "")
     _greeting_line = f'Start with "Dear {_greeting_name}," — do not use any other name.' if _greeting_name else 'Start with "Hi," — do not use a name in the greeting.'
 
+    # Do NOT pass filenames or per-document types to the LLM — if it sees the
+    # list, it tends to repeat it in the body even when told not to. A status
+    # table is appended to the email separately (see html_table below).
+    _total_docs = len(docs_attached) + len(docs_missing)
+    if docs_missing:
+        doc_status_line = (
+            f"Document status: {len(docs_attached)} of {_total_docs} requested documents are attached; "
+            f"{len(docs_missing)} currently unavailable (a detailed status table is appended below your text)."
+        )
+    else:
+        doc_status_line = (
+            f"Document status: all {_total_docs} requested documents are attached "
+            "(a detailed status table is appended below your text)."
+        )
+
     user = f"""Write a professional email reply to a customer who requested shipping documents.
 
-ATTACHED DOCUMENTS ({len(docs_attached)} of 3):
-{attached_list}
-
-{"MISSING DOCUMENTS (not available at this time):" + chr(10) + missing_list if docs_missing else "All requested documents are available."}
+{doc_status_line}
 
 {_greeting_line}
 
 Order / PO reference: {req.extracted_order_id}
-{order_info}
-{"Delivery date: " + str(pod.delivery_date) if pod else ""}
-{"Carrier: " + pod.carrier if pod else ""}
-{"Signed by: " + (pod.signed_by or "On file") if pod else ""}
 
 Instructions:
 {instructions}"""
@@ -1574,7 +1619,7 @@ Instructions:
                             {"original_provider": orig, "error": err}, success=False)
         # Restore real customer name if it was replaced for anonymization
         llm_body = llm_body.replace("[CUSTOMER]", _compose_customer)
-        body = _strip_markdown(_strip_sign_off(llm_body))
+        body = _strip_doc_enumeration(_strip_markdown(_strip_sign_off(llm_body)))
     except Exception:
         doc_list = attached_list
         _fallback_greeting = f"Dear {_greeting_name}," if _greeting_name else "Hi,"
@@ -1742,7 +1787,7 @@ Instructions:
                             {"original_provider": orig, "error": err}, success=False)
         # Restore real customer name if it was replaced for anonymization
         llm_intro = llm_intro.replace("[CUSTOMER]", customer_fallback)
-        intro = _strip_markdown(_strip_sign_off(llm_intro))
+        intro = _strip_doc_enumeration(_strip_markdown(_strip_sign_off(llm_intro)))
     except Exception:
         _fallback_greet_m = f"Dear {_greeting_name_m}," if _greeting_name_m else "Hi,"
         intro = f"{_fallback_greet_m}\n\nPlease find below a summary of the shipping document status for your orders."
@@ -1869,12 +1914,21 @@ async def _auto_send_response(db: AsyncSession, req: EmailRequest,
         _log.warning("Auto-send aborted — redirecting to approval queue (missing files)")
         return None  # caller will check and fall through to approval
 
+    _quoted = {
+        "from_name":  req.from_name or "",
+        "from_email": req.from_email or "",
+        "date":       req.received_at,
+        "subject":    req.subject or "",
+        "body":       req.body or "",
+    }
     send_result = await send_email(
         db,
         to=req.from_email,
         subject=req.response_subject or f"Re: {req.subject}",
         body=req.response_body or "",
         attachments=valid_paths or None,
+        quoted_original=_quoted,
+        in_reply_to=req.imap_message_id,
     )
 
     req.status = "completed"
