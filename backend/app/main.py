@@ -110,7 +110,7 @@ async def _autopoll_loop():
 
 async def _imap_poll_loop():
     """Background task: polls active monitored mailboxes on their configured intervals."""
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta
     from sqlalchemy import select
     from app.db.session import AsyncSessionLocal
     from app.models.models import MonitoredEmail, SystemConfig
@@ -135,7 +135,10 @@ async def _imap_poll_loop():
                     if not me.imap_host or (not me.imap_password and (me.auth_type or 'password') == 'password'):
                         continue
                     interval = timedelta(seconds=loop_interval)
-                    due = me.last_checked_at is None or (now - me.last_checked_at) >= interval
+                    last = me.last_checked_at
+                    if last and last.tzinfo is not None:
+                        last = last.replace(tzinfo=None)
+                    due = last is None or (now - last) >= interval
                     if due:
                         logger.info("IMAP: polling %s (interval=%ds)", me.email, loop_interval)
                         count = await poll_monitored_email(db, me)
