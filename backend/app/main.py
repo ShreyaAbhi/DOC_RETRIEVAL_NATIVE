@@ -499,6 +499,69 @@ async def _run_migrations_inner():
         })
 
 
+async def _migrate_utc_to_local():
+    """One-time migration: shift all created_at/received_at/updated_at values
+    from UTC (written by SQLite's CURRENT_TIMESTAMP / func.now()) to server
+    local time.  Uses a migration flag in system_config to run only once."""
+    from sqlalchemy import text
+    async with engine.begin() as conn:
+        row = await conn.execute(text(
+            "SELECT value FROM system_config WHERE key = 'migration_utc_to_local_done'"
+        ))
+        if row.scalar():
+            return  # Already migrated
+
+        # Compute the server's UTC offset in hours (e.g. -4 for EDT, -5 for EST)
+        from datetime import datetime, timezone
+        utc_offset_seconds = datetime.now(timezone.utc).astimezone().utcoffset().total_seconds()
+        offset_hours = int(utc_offset_seconds // 3600)
+        offset_sign = "+" if offset_hours >= 0 else ""
+        offset_str = f"{offset_sign}{offset_hours} hours"
+
+        logger.info("Migrating timestamps from UTC to local time (offset: %s)", offset_str)
+
+        # All tables/columns that used server_default=func.now() (UTC)
+        columns_to_fix = [
+            ("users", "created_at"),
+            ("password_reset_tokens", "created_at"),
+            ("material_master", "created_at"),
+            ("material_master", "updated_at"),
+            ("orders", "created_at"),
+            ("orders", "updated_at"),
+            ("order_lines", "created_at"),
+            ("order_lines", "updated_at"),
+            ("pod_documents", "created_at"),
+            ("packing_slip_documents", "created_at"),
+            ("invoice_documents", "created_at"),
+            ("email_requests", "received_at"),
+            ("approval_queue", "created_at"),
+            ("guidance_queue", "created_at"),
+            ("audit_logs", "created_at"),
+            ("monitored_emails", "created_at"),
+            ("oauth_pending_states", "created_at"),
+            ("system_config", "updated_at"),
+            ("carriers", "created_at"),
+            ("api_keys", "created_at"),
+            ("pod_registry", "created_at"),
+        ]
+
+        for table, col in columns_to_fix:
+            try:
+                await conn.execute(text(
+                    f"UPDATE {table} SET {col} = datetime({col}, :offset) "
+                    f"WHERE {col} IS NOT NULL"
+                ), {"offset": offset_str})
+            except Exception as exc:
+                logger.warning("UTC migration: skipping %s.%s — %s", table, col, exc)
+
+        await conn.execute(text(
+            "INSERT INTO system_config (key, value, description) "
+            "VALUES ('migration_utc_to_local_done', :v, 'One-time UTC→local timestamp migration flag') "
+            "ON CONFLICT (key) DO UPDATE SET value = :v"
+        ), {"v": datetime.now().isoformat()})
+        logger.info("UTC→local timestamp migration complete")
+
+
 async def _sync_version_from_file():
     """Read the VERSION file and write it into the app_version config key
     so the sidebar always reflects the installed patch level."""
@@ -523,6 +586,7 @@ async def _sync_version_from_file():
 async def lifespan(app: FastAPI):
     logger.info("Lifespan startup: running migrations...")
     await _run_migrations()
+    await _migrate_utc_to_local()
     await _sync_version_from_file()
     logger.info("Lifespan startup: creating background tasks...")
     imap_task     = asyncio.create_task(_imap_poll_loop())

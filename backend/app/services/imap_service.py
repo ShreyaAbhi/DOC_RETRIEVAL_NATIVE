@@ -408,10 +408,10 @@ async def poll_monitored_email(db: AsyncSession, me: MonitoredEmail) -> int:
 
     await db.commit()
 
-    # Enqueue each customer email for processing via Celery
-    from app.core.tasks import process_email_task
+    # Dispatch to Celery if workers are up, otherwise inline queue
+    from app.core.tasks import dispatch_pipeline
     for req_id in request_ids:
-        process_email_task.delay(req_id)
+        await dispatch_pipeline(req_id)
 
     return count
 

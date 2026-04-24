@@ -1,7 +1,7 @@
+from datetime import datetime
 from sqlalchemy import (Column, String, Text, Boolean, Integer, Numeric,
                         DateTime, Date, Time, ForeignKey, JSON)
 from sqlalchemy.orm import relationship, DeclarativeBase
-from sqlalchemy.sql import func
 import uuid
 
 
@@ -17,7 +17,7 @@ class User(Base):
     hashed_password = Column(String(200), nullable=False)
     role         = Column(String(50), nullable=False, default='reviewer')
     is_active    = Column(Boolean, default=True)
-    created_at   = Column(DateTime, server_default=func.now())
+    created_at   = Column(DateTime, default=datetime.now)
     last_login   = Column(DateTime)
     created_by   = Column(String(200), default='system')
 
@@ -29,7 +29,7 @@ class PasswordResetToken(Base):
     token_hash = Column(String(64), unique=True, nullable=False)
     expires_at = Column(DateTime, nullable=False)
     used       = Column(Boolean, default=False)
-    created_at = Column(DateTime, server_default=func.now())
+    created_at = Column(DateTime, default=datetime.now)
 
 
 class MaterialMaster(Base):
@@ -38,8 +38,8 @@ class MaterialMaster(Base):
     material_number = Column(String(50), unique=True, nullable=False)
     description     = Column(Text, nullable=False)
     unit_of_measure = Column(String(20), default="EA")
-    created_at      = Column(DateTime, server_default=func.now())
-    updated_at      = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    created_at      = Column(DateTime, default=datetime.now)
+    updated_at      = Column(DateTime, default=datetime.now, onupdate=datetime.now)
     created_by      = Column(String(100), default="system")
     is_active       = Column(Boolean, default=True)
 
@@ -55,8 +55,8 @@ class Order(Base):
     customer_name             = Column(String(200))
     customer_email            = Column(String(200))
     status                    = Column(String(50), default="active")
-    created_at                = Column(DateTime, server_default=func.now())
-    updated_at                = Column(DateTime, server_default=func.now())
+    created_at                = Column(DateTime, default=datetime.now)
+    updated_at                = Column(DateTime, default=datetime.now)
     lines                     = relationship("OrderLine", back_populates="order", cascade="all, delete-orphan")
 
 
@@ -73,8 +73,8 @@ class OrderLine(Base):
     unit_of_measure      = Column(String(20))
     tracking_number      = Column(String(100))
     carrier              = Column(String(50))
-    created_at           = Column(DateTime, server_default=func.now())
-    updated_at           = Column(DateTime, server_default=func.now())
+    created_at           = Column(DateTime, default=datetime.now)
+    updated_at           = Column(DateTime, default=datetime.now)
     order                = relationship("Order", back_populates="lines")
 
 
@@ -93,7 +93,7 @@ class PodDocument(Base):
     delivery_location = Column(String(200))
     raw_api_response  = Column(JSON)
     source            = Column(String(50), default="ups_api")
-    created_at        = Column(DateTime, server_default=func.now())
+    created_at        = Column(DateTime, default=datetime.now)
 
 
 class PackingSlipDocument(Base):
@@ -105,7 +105,7 @@ class PackingSlipDocument(Base):
     file_path       = Column(Text, nullable=False)
     file_hash       = Column(String(64))
     source          = Column(String(50), default="folder_scan")
-    created_at      = Column(DateTime, server_default=func.now())
+    created_at      = Column(DateTime, default=datetime.now)
 
 
 class InvoiceDocument(Base):
@@ -117,7 +117,7 @@ class InvoiceDocument(Base):
     file_path      = Column(Text, nullable=False)
     file_hash      = Column(String(64))
     source         = Column(String(50), default="folder_scan")
-    created_at     = Column(DateTime, server_default=func.now())
+    created_at     = Column(DateTime, default=datetime.now)
 
 
 class EmailRequest(Base):
@@ -128,7 +128,7 @@ class EmailRequest(Base):
     from_name                = Column(String(200))
     subject                  = Column(Text, nullable=False)
     body                     = Column(Text, nullable=False)
-    received_at              = Column(DateTime, server_default=func.now())
+    received_at              = Column(DateTime, default=datetime.now)
     status                   = Column(String(50), default='received')
     is_pod_request           = Column(Boolean)
     confidence_score         = Column(Numeric(5, 2))
@@ -171,7 +171,7 @@ class ApprovalQueue(Base):
     reviewed_at             = Column(DateTime)
     reviewer_notes          = Column(Text)
     expires_at              = Column(DateTime)
-    created_at              = Column(DateTime, server_default=func.now())
+    created_at              = Column(DateTime, default=datetime.now)
     line_deletion_flag      = Column(Boolean, default=False)
     request                 = relationship("EmailRequest", back_populates="approval")
 
@@ -187,7 +187,7 @@ class GuidanceQueue(Base):
     human_guidance = Column(Text)
     provided_by    = Column(String(100))
     provided_at    = Column(DateTime)
-    created_at         = Column(DateTime, server_default=func.now())
+    created_at         = Column(DateTime, default=datetime.now)
     line_deletion_flag = Column(Boolean, default=False)
     request            = relationship("EmailRequest", back_populates="guidance")
 
@@ -204,7 +204,7 @@ class AuditLog(Base):
     success      = Column(Boolean, default=True)
     error_detail = Column(Text)
     ip_address   = Column(String(45))
-    created_at   = Column(DateTime, server_default=func.now())
+    created_at   = Column(DateTime, default=datetime.now)
     request      = relationship("EmailRequest", back_populates="audit_logs")
 
 
@@ -234,7 +234,7 @@ class MonitoredEmail(Base):
     oauth_scope            = Column(Text)
     last_reauth_reminder_at = Column(DateTime)
     # Meta
-    created_at             = Column(DateTime, server_default=func.now())
+    created_at             = Column(DateTime, default=datetime.now)
     configured_at          = Column(DateTime)
     created_by             = Column(String(200), default='system')
     last_checked_at        = Column(DateTime)
@@ -249,7 +249,7 @@ class OAuthPendingState(Base):
     provider            = Column(String(30), nullable=False)   # 'microsoft'
     setup_token         = Column(String(100), nullable=False)
     monitored_email_id  = Column(String(36))
-    created_at          = Column(DateTime, server_default=func.now())
+    created_at          = Column(DateTime, default=datetime.now)
     expires_at          = Column(DateTime, nullable=False)
 
 
@@ -258,7 +258,7 @@ class SystemConfig(Base):
     key         = Column(String(100), primary_key=True)
     value       = Column(Text)
     description = Column(Text)
-    updated_at  = Column(DateTime, server_default=func.now())
+    updated_at  = Column(DateTime, default=datetime.now)
     updated_by  = Column(String(100), default="system")
 
 
@@ -272,7 +272,7 @@ class Carrier(Base):
     ftp_subfolder     = Column(String(500))
     notes             = Column(Text)
     is_active         = Column(Boolean, default=True)
-    created_at        = Column(DateTime, server_default=func.now())
+    created_at        = Column(DateTime, default=datetime.now)
     created_by        = Column(String(200), default='system')
     pod_registries    = relationship("PodRegistry", back_populates="carrier")
 
@@ -286,7 +286,7 @@ class ApiKey(Base):
     created_by   = Column(String(200))
     is_active    = Column(Boolean, default=True)
     last_used_at = Column(DateTime)
-    created_at   = Column(DateTime, server_default=func.now())
+    created_at   = Column(DateTime, default=datetime.now)
 
 
 class PodRegistry(Base):
@@ -307,6 +307,6 @@ class PodRegistry(Base):
     notes                    = Column(Text)
     is_deleted               = Column(Boolean, default=False, nullable=False, server_default='0')
     deleted_at               = Column(DateTime)
-    created_at               = Column(DateTime, server_default=func.now())
+    created_at               = Column(DateTime, default=datetime.now)
     carrier                  = relationship("Carrier", back_populates="pod_registries")
     order                    = relationship("Order")

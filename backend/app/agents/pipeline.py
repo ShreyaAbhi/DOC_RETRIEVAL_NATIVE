@@ -507,6 +507,7 @@ async def process_email_request(db: AsyncSession, request_id: str):
         req.error_message = str(e)
         await _update_status(db, req, "failed")
         await log_audit(db, req.id, "error", f"Pipeline error: {e}", {}, success=False)
+        await db.commit()  # Persist error status so it's visible in the UI
         raise
 
 

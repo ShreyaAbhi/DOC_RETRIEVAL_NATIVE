@@ -9,7 +9,7 @@ from app.models.models import EmailRequest, User, GuidanceQueue, ApprovalQueue
 from app.agents.pipeline import make_ref
 from app.services.audit_service import log_audit
 from app.core.security import get_current_user
-from app.core.tasks import process_email_task
+from app.core.tasks import dispatch_pipeline
 
 router = APIRouter()
 
@@ -44,7 +44,7 @@ async def submit_email(email: InboundEmail, db: AsyncSession = Depends(get_db), 
                     f"Email received from {email.from_email}",
                     {"subject": email.subject})
     await db.commit()
-    process_email_task.delay(str(req.id))
+    await dispatch_pipeline(str(req.id))
     return {"id": str(req.id), "reference": req.reference_number, "status": "received"}
 
 
@@ -80,9 +80,8 @@ async def retrigger_requests(
 
     await db.commit()
 
-    # Enqueue after commit so the worker sees the reset state
     for req_id in body.ids:
-        process_email_task.delay(req_id)
+        await dispatch_pipeline(req_id)
 
     return {"triggered": triggered}
 

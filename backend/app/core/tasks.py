@@ -1,8 +1,61 @@
-from app.core.celery_app import celery_app
+import asyncio
 import logging
 import os
 
+from app.core.celery_app import celery_app
+
 logger = logging.getLogger(__name__)
+
+# ── Inline pipeline fallback (serialized, mirrors Celery concurrency=1) ──
+_pipeline_queue: asyncio.Queue | None = None
+
+
+def _get_pipeline_queue() -> asyncio.Queue:
+    global _pipeline_queue
+    if _pipeline_queue is None:
+        _pipeline_queue = asyncio.Queue()
+        asyncio.create_task(_pipeline_worker())
+    return _pipeline_queue
+
+
+async def _pipeline_worker():
+    """Serial worker: processes one pipeline request at a time, with retries."""
+    from app.agents.pipeline import process_email_request
+    while True:
+        request_id = await _pipeline_queue.get()
+        for attempt in range(3):
+            try:
+                engine, SessionLocal = _make_session_factory()
+                try:
+                    async with SessionLocal() as db:
+                        await process_email_request(db, request_id)
+                        await db.commit()
+                finally:
+                    await engine.dispose()
+                break
+            except Exception as exc:
+                logger.error("Inline pipeline attempt %d failed for %s: %s",
+                             attempt + 1, request_id, exc)
+                if attempt < 2:
+                    await asyncio.sleep(30)
+        _pipeline_queue.task_done()
+
+
+async def dispatch_pipeline(request_id: str):
+    """Send to Celery if workers are up, otherwise fall back to inline queue."""
+    loop = asyncio.get_event_loop()
+    try:
+        # Quick check (run in executor to avoid blocking the event loop)
+        result = await loop.run_in_executor(
+            None, lambda: celery_app.control.ping(timeout=1.0))
+        if result:
+            await loop.run_in_executor(
+                None, lambda: process_email_task.delay(request_id))
+            return
+    except Exception:
+        pass
+    logger.info("No Celery workers — queuing %s for inline processing", request_id)
+    _get_pipeline_queue().put_nowait(request_id)
 
 
 def _make_session_factory():
