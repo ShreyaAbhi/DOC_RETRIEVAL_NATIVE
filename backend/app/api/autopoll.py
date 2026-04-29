@@ -70,9 +70,10 @@ async def preread_documents(
     orders table, and renames the file by prepending the reference so the
     subsequent scan step can match it by filename.
     """
-    from app.core.tasks import preread_documents_task
-    preread_documents_task.delay()
-    return {"message": "Document pre-read queued. Files will be renamed within seconds."}
+    from app.core.tasks import dispatch_preread_documents
+    mode = await dispatch_preread_documents()
+    suffix = " (running inline — Celery worker unavailable)" if mode == "inline" else ""
+    return {"message": f"Document pre-read queued. Files will be renamed within seconds.{suffix}"}
 
 
 @router.post("/scan-documents")
@@ -89,6 +90,7 @@ async def scan_all_documents(
     all_ids = [str(row[0]) for row in result.all()]
     if not all_ids:
         return {"queued": 0, "message": "No orders found"}
-    from app.core.tasks import scan_order_documents_task
-    scan_order_documents_task.delay(all_ids)
-    return {"queued": len(all_ids), "message": f"Scan queued for {len(all_ids)} order(s)"}
+    from app.core.tasks import dispatch_scan_documents
+    mode = await dispatch_scan_documents(all_ids)
+    suffix = " (running inline — Celery worker unavailable)" if mode == "inline" else ""
+    return {"queued": len(all_ids), "message": f"Scan queued for {len(all_ids)} order(s).{suffix}"}

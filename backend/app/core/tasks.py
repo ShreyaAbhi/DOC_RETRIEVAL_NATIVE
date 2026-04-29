@@ -43,19 +43,94 @@ async def _pipeline_worker():
 
 async def dispatch_pipeline(request_id: str):
     """Send to Celery if workers are up, otherwise fall back to inline queue."""
-    loop = asyncio.get_event_loop()
-    try:
-        # Quick check (run in executor to avoid blocking the event loop)
-        result = await loop.run_in_executor(
-            None, lambda: celery_app.control.ping(timeout=1.0))
-        if result:
+    if await _celery_workers_alive():
+        loop = asyncio.get_event_loop()
+        try:
             await loop.run_in_executor(
                 None, lambda: process_email_task.delay(request_id))
             return
-    except Exception:
-        pass
+        except Exception as exc:
+            logger.warning("Celery delay failed, falling back to inline: %s", exc)
     logger.info("No Celery workers — queuing %s for inline processing", request_id)
     _get_pipeline_queue().put_nowait(request_id)
+
+
+async def _celery_workers_alive() -> bool:
+    """Return True if at least one Celery worker responds to ping."""
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(
+            None, lambda: celery_app.control.ping(timeout=1.0))
+        return bool(result)
+    except Exception:
+        return False
+
+
+async def _scan_order_documents_inline(order_ids: list):
+    """Inline equivalent of scan_order_documents_task (used when Celery is down)."""
+    from app.agents.pipeline import _find_packing_slip_in_db, _find_invoice_in_db
+    from app.services.pod_folder_service import scan_pod_folder_for_order
+    from app.models.models import Order
+
+    engine, SessionLocal = _make_session_factory()
+    try:
+        async with SessionLocal() as db:
+            for order_id in order_ids:
+                try:
+                    order = await db.get(Order, order_id)
+                    if order:
+                        await scan_pod_folder_for_order(db, order)
+                        await _find_packing_slip_in_db(db, order)
+                        await _find_invoice_in_db(db, order)
+                        await db.commit()
+                except Exception as e:
+                    logger.warning("inline scan: error for order %s: %s", order_id, e)
+    finally:
+        await engine.dispose()
+
+
+async def _preread_documents_inline():
+    """Inline equivalent of preread_documents_task."""
+    from app.services.document_prereader_service import preread_all_folders
+
+    engine, SessionLocal = _make_session_factory()
+    try:
+        async with SessionLocal() as db:
+            result = await preread_all_folders(db)
+            logger.info("inline preread complete: %s", result)
+            return result
+    finally:
+        await engine.dispose()
+
+
+async def dispatch_scan_documents(order_ids: list):
+    """Queue a document scan via Celery, or run inline if no worker is up."""
+    if await _celery_workers_alive():
+        loop = asyncio.get_event_loop()
+        try:
+            await loop.run_in_executor(
+                None, lambda: scan_order_documents_task.delay(order_ids))
+            return "celery"
+        except Exception as exc:
+            logger.warning("Celery delay failed, falling back to inline scan: %s", exc)
+    logger.info("No Celery workers — running inline scan for %d order(s)", len(order_ids))
+    asyncio.create_task(_scan_order_documents_inline(order_ids))
+    return "inline"
+
+
+async def dispatch_preread_documents():
+    """Queue a document pre-read via Celery, or run inline if no worker is up."""
+    if await _celery_workers_alive():
+        loop = asyncio.get_event_loop()
+        try:
+            await loop.run_in_executor(
+                None, lambda: preread_documents_task.delay())
+            return "celery"
+        except Exception as exc:
+            logger.warning("Celery delay failed, falling back to inline preread: %s", exc)
+    logger.info("No Celery workers — running inline preread")
+    asyncio.create_task(_preread_documents_inline())
+    return "inline"
 
 
 def _make_session_factory():
@@ -157,29 +232,7 @@ def scan_order_documents_task(order_ids: list):
     Reuses the pipeline's folder-scan helpers (_find_packing_slip_in_db,
     _find_invoice_in_db) which save matches to DB on first discovery.
     """
-    import asyncio
-    from app.agents.pipeline import _find_packing_slip_in_db, _find_invoice_in_db
-    from app.services.pod_folder_service import scan_pod_folder_for_order
-    from app.models.models import Order
-
-    async def run():
-        engine, SessionLocal = _make_session_factory()
-        try:
-            async with SessionLocal() as db:
-                for order_id in order_ids:
-                    try:
-                        order = await db.get(Order, order_id)
-                        if order:
-                            await scan_pod_folder_for_order(db, order)
-                            await _find_packing_slip_in_db(db, order)
-                            await _find_invoice_in_db(db, order)
-                            await db.commit()
-                    except Exception as e:
-                        logger.warning("scan_order_documents_task: error for order %s: %s", order_id, e)
-        finally:
-            await engine.dispose()
-
-    asyncio.run(run())
+    asyncio.run(_scan_order_documents_inline(order_ids))
 
 
 @celery_app.task(name="app.core.tasks.trigger_power_automate_task")
@@ -229,21 +282,7 @@ def preread_documents_task():
     find matching reference numbers from the orders table, and rename files
     by prepending the reference so the scan step can match them.
     """
-    import asyncio
-    from app.services.document_prereader_service import preread_all_folders
-
-    async def run():
-        engine, SessionLocal = _make_session_factory()
-        try:
-            async with SessionLocal() as db:
-                result = await preread_all_folders(db)
-                return result
-        finally:
-            await engine.dispose()
-
-    result = asyncio.run(run())
-    logger.info("preread_documents_task complete: %s", result)
-    return result
+    return asyncio.run(_preread_documents_inline())
 
 
 @celery_app.task(name="app.core.tasks.check_ollama_task")

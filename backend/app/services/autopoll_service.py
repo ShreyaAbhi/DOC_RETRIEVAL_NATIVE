@@ -140,7 +140,7 @@ async def run_autopoll(db: AsyncSession) -> dict:
     # Trigger downstream document-finding tasks for newly created orders
     new_ids = result["new_order_ids"]
     if new_ids:
-        _dispatch_downstream(new_ids)
+        await _dispatch_downstream(new_ids)
 
     return result
 
@@ -329,14 +329,21 @@ async def _save_result(db: AsyncSession, result: dict) -> None:
     await db.commit()
 
 
-def _dispatch_downstream(new_order_ids: list) -> None:
-    """Dispatch Celery tasks to find PODs, packing slips, and invoices for new orders."""
+async def _dispatch_downstream(new_order_ids: list) -> None:
+    """Dispatch Celery tasks to find PODs, packing slips, and invoices for new orders.
+    Falls back to inline async execution when no Celery worker is available."""
     try:
-        from app.core.tasks import poll_ftp_task, scan_order_documents_task, trigger_power_automate_task
-        poll_ftp_task.delay()
-        scan_order_documents_task.delay(new_order_ids)
-        trigger_power_automate_task.delay(new_order_ids)
-        logger.info("Autopoll: dispatched FTP poll + document scan + Power Automate for %d new order(s)", len(new_order_ids))
+        from app.core.tasks import (
+            poll_ftp_task,
+            trigger_power_automate_task,
+            dispatch_scan_documents,
+            _celery_workers_alive,
+        )
+        if await _celery_workers_alive():
+            poll_ftp_task.delay()
+            trigger_power_automate_task.delay(new_order_ids)
+        mode = await dispatch_scan_documents(new_order_ids)
+        logger.info("Autopoll: dispatched document scan (%s) for %d new order(s)", mode, len(new_order_ids))
     except Exception as e:
         logger.error("Autopoll: failed to dispatch downstream tasks: %s", e)
 
